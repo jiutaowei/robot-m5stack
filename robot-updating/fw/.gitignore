@@ -37,7 +37,7 @@
 # Build files
 build/
 cmake-build-*/
-/components/
+/components/  # 定制组件源码，需入库（见顶层 .gitignore 说明）
 managed_components/
 
 # PlatformIO
@@ -64,4 +64,4 @@ obj/
 sdkconfig
 sdkconfig.old
 
-xiaozhi-esp32/
+# xiaozhi-esp32/  # 已由顶层 robot-m5stack 仓库统一管理，不再忽略

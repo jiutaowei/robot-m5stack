@@ -1,0 +1,13 @@
+## IDF Component Manager Manifest File
+# root cause of "unknown name" was fw/CMakeLists.txt missing EXTRA_COMPONENT_DIRS,
+# fixed in fw/CMakeLists.txt:28. This yml is just a placeholder now.
+version: "7.4.2"
+description: >-
+  A simple and efficient JSON library for embedded C++.
+url: https://arduinojson.org/
+files:
+  exclude:
+    - "**/.vs/**/*"
+    - ".devcontainer/**/*"
+    - "examples/**/*"
+    - "extras/**/*"

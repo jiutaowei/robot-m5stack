@@ -17,6 +17,14 @@ robot-updating/fw/sdkconfig.old
 *.o
 *.a
 
+# ===== 覆盖 fw/.gitignore 的误伤规则：这些是源码，必须入库 =====
+# 上游 fw/.gitignore 忽略 xiaozhi-esp32/ 与 /components/（原分开管理），
+# 本仓库整体合管，需强制纳入固件框架与定制组件源码。
+!robot-updating/fw/xiaozhi-esp32/
+!robot-updating/fw/components/
+robot-updating/fw/xiaozhi-esp32/.git/
+robot-updating/fw/components/**/.git/
+
 # ===== 运行时数据 / 缓存 / 日志 =====
 **/tmp/
 xiaozhi-server/tmp/
