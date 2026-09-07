@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 米宝一号固件烧录脚本（本机适配版）
+# 米宝一号固件烧录脚本（Mac 适配版）
 # 用法：
 #   ./scripts/flash.sh                  # 用默认串口
 #   ./scripts/flash.sh /dev/cu.usbmodemXXXXX   # 指定串口
@@ -10,11 +10,39 @@
 #   1) esptool 从 ESP-IDF 的 python_env 中动态查找，不再硬编码 cobain 路径。
 #   2) 固件在源码目录 build/ 下（本机路径无特殊字符，无需镜像目录）。
 #   3) bootloader offset 必须 0x0（ESP-IDF v5.5+），换版本前先 erase。
+#
+#   Windows 用户：请勿在 Git Bash 里跑本脚本（串口号 /dev/cu.* 为 Mac 专属），
+#   改用官方「ESP-IDF 5.5 CMD」，在 fw/ 目录执行：
+#       idf.py -p COM3 flash
+#   详见仓库根目录 WINDOWS_使用指南.md
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FW="$SCRIPT_DIR/../fw"
+
+# 检测是否 Windows（MSYS/Git Bash 下 uname 含 MINGW/MSYS）
+detect_windows() {
+    case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+if detect_windows; then
+    cat >&2 <<'EOF'
+[flash.sh] ✗ 检测到 Windows 环境。
+本脚本为 Mac 适配（串口号 /dev/cu.usbmodem*），Windows 请勿运行。
+
+Windows 正确做法：
+  1. 开始菜单打开「ESP-IDF 5.5 CMD」
+  2. cd 到固件目录（本仓库 robot-updating/fw）
+  3. 执行：idf.py -p COM3 flash   （COM3 换成设备管理器里的端口）
+
+详见仓库根目录 WINDOWS_使用指南.md
+EOF
+    exit 1
+fi
 
 PORT=""
 DO_ERASE=0
