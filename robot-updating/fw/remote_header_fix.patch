@@ -1,0 +1,5 @@
+diff --git a/remote/code/main/joystick/m5_i2c_bridge.h b/remote/code/main/joystick/m5_i2c_bridge.h
+--- a/remote/code/main/joystick/m5_i2c_bridge.h
++++ b/remote/code/main/joystick/m5_i2c_bridge.h
+@@ -21,0 +22 @@
++#endif

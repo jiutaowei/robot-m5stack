@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>米宝一号 · 管理台</title>
+<style>
+  :root { --primary: #2DBE8D; --primary-dark: #249b74; --bg: #f6f8f7; --card: #fff; --text: #2b2f2e; --muted: #8a938f; --danger: #e05d5d; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--primary); color: #fff; padding: 18px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header .sub { font-size: 13px; opacity: .85; }
+  main { max-width: 960px; margin: 24px auto; padding: 0 16px; display: grid; gap: 20px; }
+  .card { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+  .card h2 { font-size: 16px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .card h2::before { content: ""; width: 4px; height: 16px; background: var(--primary); border-radius: 2px; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  button, select { font-size: 13px; border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+  select { border: 1px solid #d8dedc; background: #fff; }
+  .btn-primary { background: var(--primary); color: #fff; border: none; }
+  .btn-primary:hover { background: var(--primary-dark); }
+  .btn-ghost { background: #fff; border: 1px solid #d8dedc; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 8px; border-bottom: 1px solid #eef1f0; vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; }
+  .tag.meeting { background: #e3f5ee; color: var(--primary-dark); }
+  .tag.personal { background: #fdf1e0; color: #c07f1d; }
+  audio { height: 32px; width: 200px; }
+  .link-btn { background: none; border: none; color: var(--primary); padding: 4px 6px; }
+  .link-btn.del { color: var(--danger); }
+  .empty { text-align: center; color: var(--muted); padding: 24px 0; font-size: 13px; }
+  .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; font-size: 13px; color: var(--muted); }
+  .iot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .iot-device { border: 1px solid #e5eae8; border-radius: 10px; padding: 14px; }
+  .iot-device .name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .iot-device .id { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .iot-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .iot-actions input { width: 72px; padding: 6px 8px; border: 1px solid #d8dedc; border-radius: 8px; font-size: 13px; }
+  .btn-on { background: var(--primary); color: #fff; border: none; }
+  .btn-off { background: #fff; color: var(--text); border: 1px solid #d8dedc; }
+  .iot-status { font-size: 12px; margin-top: 8px; min-height: 16px; }
+  .iot-status.ok { color: var(--primary-dark); }
+  .iot-status.fail { color: var(--danger); }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #2b2f2e; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #toast.show { opacity: .95; }
+
+  /* ===== AI 转写 / 纪要 ===== */
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+  .badge.none    { background: #eef1f0; color: var(--muted); }
+  .badge.processing { background: #fff6e5; color: #c07f1d; }
+  .badge.done    { background: #e3f5ee; color: var(--primary-dark); }
+  .badge.error   { background: #fdecec; color: var(--danger); }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .badge.processing .dot { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+  .link-btn.ai { color: #2a7fb8; }
+
+  /* 弹层 */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(20,26,24,.5); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; backdrop-filter: blur(2px); }
+  .modal-overlay.show { display: flex; animation: fadeIn .18s ease; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal { background: var(--card); border-radius: 14px; width: 100%; max-width: 760px; max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,.22); animation: pop .2s ease; overflow: hidden; }
+  @keyframes pop { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .modal-head { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid #eef1f0; }
+  .modal-head .title { font-size: 15px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .modal-close { background: none; border: none; font-size: 20px; color: var(--muted); cursor: pointer; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+  .modal-close:hover { background: #f0f3f2; color: var(--text); }
+  .modal-body { overflow-y: auto; padding: 18px 20px; display: grid; gap: 18px; }
+  .modal-section h3 { font-size: 13px; color: var(--muted); font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; letter-spacing: .3px; }
+  .modal-section h3::before { content: ""; width: 3px; height: 13px; background: var(--primary); border-radius: 2px; }
+  .transcript-text { background: #f6f8f7; border: 1px solid #e5eae8; border-radius: 10px; padding: 14px 16px; font-size: 14px; line-height: 1.7; white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
+  .summary-md { border: 1px solid #e5eae8; border-radius: 10px; padding: 6px 18px; font-size: 14px; line-height: 1.7; }
+  .summary-md h3 { font-size: 15px; margin: 14px 0 6px; color: var(--primary-dark); border-bottom: 1px solid #eef1f0; padding-bottom: 4px; }
+  .summary-md h3::before { display: none; }
+  .summary-md h4 { font-size: 14px; margin: 12px 0 4px; }
+  .summary-md p { margin: 6px 0; }
+  .summary-md ul { margin: 6px 0 6px 2px; padding-left: 20px; }
+  .summary-md li { margin: 3px 0; }
+  .modal-actions { display: flex; gap: 10px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .btn-sm { font-size: 13px; border-radius: 8px; padding: 7px 16px; cursor: pointer; }
+  .btn-load { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+  .btn-load .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #d8dedc; border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ===== Tab 导航 ===== */
+  .tabs { display: flex; gap: 6px; background: var(--card); border-radius: 12px; padding: 6px; box-shadow: 0 1px 4px rgba(0,0,0,.06); flex-wrap: wrap; }
+  .tab { flex: 1; min-width: 120px; text-align: center; padding: 10px 12px; border: none; background: transparent; border-radius: 9px; font-size: 14px; color: var(--muted); cursor: pointer; transition: all .15s; }
+  .tab:hover { background: #f0f3f2; color: var(--text); }
+  .tab.active { background: var(--primary); color: #fff; font-weight: 600; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: grid; gap: 20px; }
+
+  /* ===== 配置表单 ===== */
+  .form-grid { display: grid; gap: 14px; }
+  .form-row { display: grid; gap: 6px; }
+  .form-row label { font-size: 13px; color: var(--muted); }
+  .form-row input { width: 100%; padding: 9px 12px; border: 1px solid #d8dedc; border-radius: 8px; font-size: 13px; }
+  .form-row input:focus { outline: none; border-color: var(--primary); }
+  .form-hint { font-size: 12px; color: var(--muted); }
+  .cfg-section { border: 1px solid #e5eae8; border-radius: 10px; padding: 16px; }
+  .cfg-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .cfg-section h3::before { content: ""; width: 3px; height: 14px; background: var(--primary); border-radius: 2px; }
+  .cfg-section h3 .mod { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .save-bar { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+  .warn { font-size: 12px; color: var(--danger); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🤖 米宝一号 · 管理台</h1>
+  <span class="sub">Stackstan 桌面机器人 · 统一管理后台</span>
+</header>
+<main>
+  <nav class="tabs">
+    <button class="tab active" data-tab="rec" onclick="switchTab('rec')">📼 录音</button>
+    <button class="tab" data-tab="iot" onclick="switchTab('iot')">🧩 物联网</button>
+    <button class="tab" data-tab="ai" onclick="switchTab('ai')">🧠 AI 配置</button>
+    <button class="tab" data-tab="device" onclick="switchTab('device')">📟 设备配置</button>
+  </nav>
+
+  <!-- Tab: 录音 -->
+  <section class="tab-panel active" id="panel-rec">
+    <div class="card">
+      <h2>录音管理</h2>
+      <div class="toolbar">
+        <select id="filterType">
+          <option value="">全部类型</option>
+          <option value="meeting">会议</option>
+          <option value="personal">个人灵感</option>
+        </select>
+        <button class="btn-primary" onclick="loadList(1)">刷新</button>
+        <span style="flex:1"></span>
+        <span id="listTotal" style="font-size:13px;color:var(--muted);align-self:center"></span>
+      </div>
+      <table>
+        <thead><tr><th>ID</th><th>文件名</th><th>类型</th><th>时长</th><th>大小</th><th>上传时间</th><th>AI 状态</th><th>播放</th><th>操作</th></tr></thead>
+        <tbody id="recBody"></tbody>
+      </table>
+      <div id="recEmpty" class="empty">暂无录音</div>
+      <div class="pager">
+        <button class="btn-ghost" onclick="loadList(page-1)">上一页</button>
+        <span id="pageInfo"></span>
+        <button class="btn-ghost" onclick="loadList(page+1)">下一页</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tab: 物联网 -->
+  <section class="tab-panel" id="panel-iot">
+    <div class="card">
+      <h2>IoT 执行器控制</h2>
+      <div class="iot-grid" id="iotGrid"></div>
+    </div>
+  </section>
+
+  <!-- Tab: AI 配置 -->
+  <section class="tab-panel" id="panel-ai">
+    <div class="card">
+      <h2>AI(ASR/LLM/TTS) 配置</h2>
+      <div class="cfg-section">
+        <h3>🎙️ ASR 语音识别 <span class="mod" id="mod-ASR"></span></h3>
+        <div class="form-grid">
+          <div class="form-row"><label>API Key（掩码显示，留空保持不变）</label><input id="asr_api_key" type="password" placeholder="sk-***" autocomplete="off"></div>
+          <div class="form-row"><label>模型 model</label><input id="asr_model" placeholder="paraformer-realtime-v2"></div>
+          <div class="form-row"><label>WebSocket 地址 ws_url</label><input id="asr_ws_url" placeholder="wss://..."></div>
+        </div>
+      </div>
+      <div style="height:16px"></div>
+      <div class="cfg-section">
+        <h3>🧠 LLM 大语言模型 <span class="mod" id="mod-LLM"></span></h3>
+        <div class="form-grid">
+          <div class="form-row"><label>API Key（掩码显示，留空保持不变）</label><input id="llm_api_key" type="password" placeholder="sk-***" autocomplete="off"></div>
+          <div class="form-row"><label>模型 model_name</label><input id="llm_model_name" placeholder="qwen-plus"></div>
+          <div class="form-row"><label>接口地址 base_url</label><input id="llm_base_url" placeholder="https://..."></div>
+        </div>
+      </div>
+      <div style="height:16px"></div>
+      <div class="cfg-section">
+        <h3>🗣️ TTS 语音合成 <span class="mod" id="mod-TTS"></span></h3>
+        <div class="form-grid">
+          <div class="form-row"><label>API Key（掩码显示，留空保持不变）</label><input id="tts_api_key" type="password" placeholder="sk-***" autocomplete="off"></div>
+          <div class="form-row"><label>模型 model</label><input id="tts_model" placeholder="cosyvoice-v2"></div>
+          <div class="form-row"><label>音色 voice</label><input id="tts_voice" placeholder="longcheng_v2"></div>
+          <div class="form-row"><label>WebSocket 地址 ws_url</label><input id="tts_ws_url" placeholder="wss://..."></div>
+        </div>
+      </div>
+      <div class="save-bar" style="margin-top:18px">
+        <button class="btn-primary" onclick="saveAiConfig()">保存 AI 配置</button>
+        <button class="btn-ghost" onclick="loadAiConfig()">重新加载</button>
+        <span class="form-hint">api_key 回显为掩码，留空则保持原值不覆盖。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tab: 设备配置 -->
+  <section class="tab-panel" id="panel-device">
+    <div class="card">
+      <h2>设备配置</h2>
+      <div class="form-grid">
+        <div class="form-row"><label>upload_url（录音上传地址）</label><input id="dev_upload_url" placeholder="http://192.168.x.x:8000/api/recording/upload"></div>
+        <div class="form-row"><label>iot_url（IoT 控制地址）</label><input id="dev_iot_url" placeholder="http://192.168.x.x:8000/api/iot/control"></div>
+        <div class="form-row"><label>ota_url（固件升级地址）</label><input id="dev_ota_url" placeholder="http://..."></div>
+      </div>
+      <div class="save-bar" style="margin-top:18px">
+        <button class="btn-primary" onclick="saveDeviceConfig()">保存设备配置</button>
+        <button class="btn-ghost" onclick="loadDeviceConfig()">重新加载</button>
+      </div>
+      <div class="warn" style="margin-top:16px">⚠️ 设备开机会自动从后台拉取以上配置；保存后请重启设备或在设备端手动刷新以生效。</div>
+    </div>
+  </section>
+</main>
+
+<!-- 转写 / 纪要弹层 -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="title" id="modalTitle">纪要</span>
+      <span id="modalBadge"></span>
+      <button class="modal-close" onclick="closeModal()" title="关闭">×</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let page = 1;
+const PAGE_SIZE = 10;
+let aiModules = { ASR: '', LLM: '', TTS: '' };
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2500);
+}
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(2) + ' MB';
+}
+function fmtDur(s) {
+  if (!s) return '-';
+  const m = Math.floor(s / 60), r = Math.round(s % 60);
+  return m > 0 ? m + '分' + r + '秒' : s + '秒';
+}
+const TYPE_CN = { meeting: '会议', personal: '个人灵感' };
+
+// ===== Tab 切换 =====
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+  if (name === 'iot' && document.getElementById('iotGrid').childElementCount === 0) loadDevices();
+  if (name === 'ai' && !document.getElementById('asr_model').value) loadAiConfig();
+  if (name === 'device') loadDeviceConfig();
+}
+
+// ===== 录音 =====
+async function loadList(p) {
+  if (p < 1) p = 1;
+  page = p;
+  const type = document.getElementById('filterType').value;
+  const qs = new URLSearchParams({ page: p, page_size: PAGE_SIZE });
+  if (type) qs.set('type', type);
+  try {
+    const res = await fetch('/api/recording/list?' + qs);
+    const data = await res.json();
+    const tbody = document.getElementById('recBody');
+    tbody.innerHTML = '';
+    document.getElementById('recEmpty').style.display = data.items.length ? 'none' : '';
+    document.getElementById('listTotal').textContent = '共 ' + data.total + ' 条';
+    const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+    document.getElementById('pageInfo').textContent = data.page + ' / ' + pages;
+    for (const r of data.items) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + r.id + '</td>' +
+        '<td>' + r.filename + '</td>' +
+        '<td><span class="tag ' + r.type + '">' + (TYPE_CN[r.type] || r.type) + '</span></td>' +
+        '<td>' + fmtDur(r.duration_s) + '</td>' +
+        '<td>' + fmtSize(r.size_bytes) + '</td>' +
+        '<td>' + r.created_at + '</td>' +
+        '<td id="badge-' + r.id + '">' + badgeHtml(r.transcript_status, r.has_summary) + '</td>' +
+        '<td><audio controls preload="none" src="/api/recording/' + r.id + '"></audio></td>' +
+        '<td>' +
+        '<button class="link-btn ai" onclick="transcribeRec(' + r.id + ')">转写</button>' +
+        '<button class="link-btn ai" onclick="openModal(' + r.id + ')">纪要</button>' +
+        '<button class="link-btn" onclick="dl(' + r.id + ')">下载</button>' +
+        '<button class="link-btn del" onclick="del(' + r.id + ')">删除</button></td>';
+      tbody.appendChild(tr);
+      if (r.transcript_status === 'processing') pollTranscript(r.id);
+    }
+  } catch (e) { toast('加载失败: ' + e); }
+}
+function dl(id) {
+  const a = document.createElement('a');
+  a.href = '/api/recording/' + id; a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function del(id) {
+  if (!confirm('确定删除该录音？')) return;
+  const res = await fetch('/api/recording/' + id, { method: 'DELETE' });
+  const data = await res.json();
+  toast(data.success ? '已删除' : '删除失败');
+  loadList(page);
+}
+
+// ===== AI 转写 / 纪要 =====
+const pollTimers = {};
+let currentRec = null;
+
+function badgeHtml(status, hasSummary) {
+  if (status === 'processing') return '<span class="badge processing"><span class="dot"></span>转写中…</span>';
+  if (status === 'done') return '<span class="badge done">✓ 已转写' + (hasSummary ? ' · 已总结' : '') + '</span>';
+  if (status === 'error') return '<span class="badge error">✕ 转写失败</span>';
+  return '<span class="badge none">未转写</span>';
+}
+function updateBadge(id, status, hasSummary) {
+  const cell = document.getElementById('badge-' + id);
+  if (cell) cell.innerHTML = badgeHtml(status, hasSummary);
+}
+
+async function transcribeRec(id) {
+  try {
+    const res = await fetch('/api/recording/' + id + '/transcribe', { method: 'POST' });
+    const d = await res.json();
+    if (!res.ok) { toast(d.detail || '转写发起失败'); return; }
+    toast('已发起转写，请稍候…');
+    updateBadge(id, 'processing', 0);
+    pollTranscript(id);
+  } catch (e) { toast('转写请求异常: ' + e); }
+}
+
+function pollTranscript(id) {
+  clearTimeout(pollTimers[id]);
+  pollTimers[id] = setTimeout(async () => {
+    try {
+      const res = await fetch('/api/recording/' + id + '/transcript');
+      const d = await res.json();
+      const st = d.transcript ? d.transcript.status : null;
+      updateBadge(id, st, d.summary ? 1 : 0);
+      if (st === 'processing') pollTranscript(id);
+      else if (currentRec === id && document.getElementById('modalOverlay').classList.contains('show')) renderModal(d);
+    } catch (e) {}
+  }, 2000);
+}
+
+async function openModal(id) {
+  currentRec = id;
+  const overlay = document.getElementById('modalOverlay');
+  overlay.classList.add('show');
+  document.getElementById('modalBody').innerHTML = '<div class="btn-load"><span class="spinner"></span>加载中…</div>';
+  try {
+    const res = await fetch('/api/recording/' + id + '/transcript');
+    const d = await res.json();
+    renderModal(d);
+  } catch (e) {
+    document.getElementById('modalBody').innerHTML = '<div class="empty">加载失败：' + e + '</div>';
+  }
+}
+function closeModal() {
+  currentRec = null;
+  document.getElementById('modalOverlay').classList.remove('show');
+}
+
+function escHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function mdInline(s) { return s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'); }
+function renderMd(md) {
+  const lines = escHtml(md).split('\n');
+  let html = '', inList = false;
+  const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+  for (const raw of lines) {
+    const ln = raw.replace(/\s+$/, '');
+    if (/^#{1,3}\s+/.test(ln)) { closeList(); html += '<h3>' + mdInline(ln.replace(/^#{1,3}\s+/, '')) + '</h3>'; }
+    else if (/^#{4,}\s+/.test(ln)) { closeList(); html += '<h4>' + mdInline(ln.replace(/^#{4,}\s+/, '')) + '</h4>'; }
+    else if (/^\s*[-*]\s+/.test(ln)) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + mdInline(ln.replace(/^\s*[-*]\s+/, '')) + '</li>'; }
+    else if (/^\s*\d+[.)]\s+/.test(ln)) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + mdInline(ln.replace(/^\s*\d+[.)]\s+/, '')) + '</li>'; }
+    else if (ln.trim() === '') { closeList(); }
+    else { closeList(); html += '<p>' + mdInline(ln) + '</p>'; }
+  }
+  closeList();
+  return html;
+}
+
+function renderModal(d) {
+  document.getElementById('modalTitle').textContent = d.filename || '纪要';
+  const tr = d.transcript;
+  const status = tr ? tr.status : null;
+  document.getElementById('modalBadge').innerHTML = badgeHtml(status, d.summary ? 1 : 0);
+
+  let transcriptHtml;
+  if (!tr) {
+    transcriptHtml = '<div class="empty">尚未转写，点击下方“开始转写”。</div>';
+  } else if (tr.status === 'processing') {
+    transcriptHtml = '<div class="btn-load"><span class="spinner"></span>正在转写，自动刷新中…</div>';
+  } else if (tr.status === 'error') {
+    transcriptHtml = '<div class="empty" style="color:var(--danger)">转写失败：' + escHtml(tr.error || '未知错误') + '</div>';
+  } else if (!tr.text) {
+    transcriptHtml = '<div class="empty">转写完成，但未识别到语音内容。</div>';
+  } else {
+    transcriptHtml = '<div class="transcript-text">' + escHtml(tr.text) + '</div>';
+  }
+
+  let summaryHtml;
+  if (d.summary) {
+    summaryHtml = '<div class="summary-md">' + renderMd(d.summary.content) + '</div>';
+  } else if (tr && tr.status === 'done' && tr.text) {
+    summaryHtml = '<div class="empty">尚未生成总结，点击下方“生成' + (d.type === 'meeting' ? '会议纪要' : '灵感整理') + '”。</div>';
+  } else {
+    summaryHtml = '<div class="empty">需先完成转写才能生成总结。</div>';
+  }
+
+  const canSummarize = tr && tr.status === 'done' && !!tr.text;
+  document.getElementById('modalBody').innerHTML =
+    '<div class="modal-section"><h3>转写全文</h3>' + transcriptHtml + '</div>' +
+    '<div class="modal-section"><h3>' + (d.type === 'meeting' ? '会议纪要' : '灵感整理') + '（' + escHtml(d.type) + '）</h3>' + summaryHtml + '</div>' +
+    '<div class="modal-actions">' +
+      '<button class="btn-sm btn-primary" id="mTranscribe" onclick="modalTranscribe()">' + (tr && tr.status === 'done' ? '重新转写' : '开始转写') + '</button>' +
+      '<button class="btn-sm btn-primary" id="mSummarize" onclick="modalSummarize()" ' + (canSummarize ? '' : 'disabled style="opacity:.5;cursor:not-allowed"') + '>' + (d.summary ? '重新生成总结' : '生成总结') + '</button>' +
+    '</div>';
+}
+
+async function modalTranscribe() {
+  if (currentRec == null) return;
+  const btn = document.getElementById('mTranscribe'); btn.disabled = true;
+  try {
+    const res = await fetch('/api/recording/' + currentRec + '/transcribe', { method: 'POST' });
+    const d = await res.json();
+    if (!res.ok) { toast(d.detail || '转写发起失败'); return; }
+    toast('已发起转写');
+    updateBadge(currentRec, 'processing', 0);
+    renderModal({ filename: document.getElementById('modalTitle').textContent, type: null, transcript: { status: 'processing' }, summary: null });
+    pollTranscript(currentRec);
+  } catch (e) { toast('转写请求异常: ' + e); }
+  finally { btn.disabled = false; }
+}
+
+async function modalSummarize() {
+  if (currentRec == null) return;
+  const btn = document.getElementById('mSummarize');
+  btn.disabled = true; btn.textContent = '总结中…';
+  try {
+    const res = await fetch('/api/recording/' + currentRec + '/summarize', { method: 'POST' });
+    const d = await res.json();
+    if (!res.ok) { toast(d.detail || '总结失败'); btn.disabled = false; btn.textContent = '生成总结'; return; }
+    toast('总结完成');
+    updateBadge(currentRec, 'done', 1);
+    const t = await (await fetch('/api/recording/' + currentRec + '/transcript')).json();
+    renderModal(t);
+  } catch (e) { toast('总结请求异常: ' + e); btn.disabled = false; btn.textContent = '生成总结'; }
+}
+
+// ===== 物联网 =====
+async function loadDevices() {
+  try {
+    const res = await fetch('/api/iot/devices');
+    const data = await res.json();
+    const grid = document.getElementById('iotGrid');
+    grid.innerHTML = '';
+    for (const d of data.devices) {
+      const div = document.createElement('div');
+      div.className = 'iot-device';
+      div.innerHTML =
+        '<div class="name">' + d.name + '</div>' +
+        '<div class="id">' + d.id + '</div>' +
+        '<div class="iot-actions">' +
+          '<button class="btn-on" onclick="control(\'' + d.id + '\',\'on\',this)">开启</button>' +
+          '<button class="btn-off" onclick="control(\'' + d.id + '\',\'off\',this)">关闭</button>' +
+          '<input type="number" min="0" max="3600" value="0" id="dur-' + d.id + '" title="持续秒数 0-3600">' +
+        '</div>' +
+        '<div class="iot-status" id="st-' + d.id + '"></div>';
+      grid.appendChild(div);
+    }
+  } catch (e) { toast('加载执行器失败: ' + e); }
+}
+async function control(actuatorId, action, btn) {
+  const st = document.getElementById('st-' + actuatorId);
+  const duration = parseInt(document.getElementById('dur-' + actuatorId).value || '0', 10);
+  st.className = 'iot-status'; st.textContent = '执行中…';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/iot/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actuator_id: actuatorId, action: action, duration: duration })
+    });
+    const data = await res.json();
+    if (data.success) { st.classList.add('ok'); st.textContent = '✔ 成功' + (data.message ? '：' + data.message : ''); }
+    else { st.classList.add('fail'); st.textContent = '✘ 失败：' + (data.error || '未知错误'); }
+  } catch (e) {
+    st.classList.add('fail'); st.textContent = '✘ 请求异常: ' + e;
+  }
+  btn.disabled = false;
+}
+
+// ===== AI 配置 =====
+async function loadAiConfig() {
+  try {
+    const res = await fetch('/api/admin/ai');
+    const d = await res.json();
+    aiModules = { ASR: d.ASR.module || '', LLM: d.LLM.module || '', TTS: d.TTS.module || '' };
+    document.getElementById('mod-ASR').textContent = aiModules.ASR;
+    document.getElementById('mod-LLM').textContent = aiModules.LLM;
+    document.getElementById('mod-TTS').textContent = aiModules.TTS;
+    document.getElementById('asr_api_key').value = d.ASR.api_key || '';
+    document.getElementById('asr_model').value = d.ASR.model || '';
+    document.getElementById('asr_ws_url').value = d.ASR.ws_url || '';
+    document.getElementById('llm_api_key').value = d.LLM.api_key || '';
+    document.getElementById('llm_model_name').value = d.LLM.model_name || '';
+    document.getElementById('llm_base_url').value = d.LLM.base_url || '';
+    document.getElementById('tts_api_key').value = d.TTS.api_key || '';
+    document.getElementById('tts_model').value = d.TTS.model || '';
+    document.getElementById('tts_voice').value = d.TTS.voice || '';
+    document.getElementById('tts_ws_url').value = d.TTS.ws_url || '';
+  } catch (e) { toast('加载 AI 配置失败: ' + e); }
+}
+async function saveAiConfig() {
+  const body = {
+    ASR: { module: aiModules.ASR, api_key: document.getElementById('asr_api_key').value, model: document.getElementById('asr_model').value, ws_url: document.getElementById('asr_ws_url').value },
+    LLM: { module: aiModules.LLM, api_key: document.getElementById('llm_api_key').value, model_name: document.getElementById('llm_model_name').value, base_url: document.getElementById('llm_base_url').value },
+    TTS: { module: aiModules.TTS, api_key: document.getElementById('tts_api_key').value, model: document.getElementById('tts_model').value, voice: document.getElementById('tts_voice').value, ws_url: document.getElementById('tts_ws_url').value }
+  };
+  try {
+    const res = await fetch('/api/admin/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = await res.json();
+    if (!res.ok) { toast(d.detail || '保存失败'); return; }
+    toast('AI 配置已保存');
+    loadAiConfig();
+  } catch (e) { toast('保存请求异常: ' + e); }
+}
+
+// ===== 设备配置 =====
+async function loadDeviceConfig() {
+  try {
+    const res = await fetch('/api/admin/device');
+    const d = await res.json();
+    document.getElementById('dev_upload_url').value = d.upload_url || '';
+    document.getElementById('dev_iot_url').value = d.iot_url || '';
+    document.getElementById('dev_ota_url').value = d.ota_url || '';
+  } catch (e) { toast('加载设备配置失败: ' + e); }
+}
+async function saveDeviceConfig() {
+  const body = {
+    upload_url: document.getElementById('dev_upload_url').value,
+    iot_url: document.getElementById('dev_iot_url').value,
+    ota_url: document.getElementById('dev_ota_url').value
+  };
+  try {
+    const res = await fetch('/api/admin/device', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = await res.json();
+    if (!res.ok) { toast(d.detail || '保存失败'); return; }
+    toast('设备配置已保存');
+  } catch (e) { toast('保存请求异常: ' + e); }
+}
+
+document.getElementById('filterType').addEventListener('change', () => loadList(1));
+loadList(1);
+loadDevices();
+</script>
+</body>
+</html>

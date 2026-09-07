@@ -1,0 +1,12 @@
+diff --git a/remote/code/sdkconfig b/remote/code/sdkconfig
+--- a/remote/code/sdkconfig
++++ b/remote/code/sdkconfig
+@@ -399 +399 @@
+-CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
++# CONFIG_ESPTOOLPY_FLASHSIZE_2MB is not set
+diff --git a/remote/code/sdkconfig.old b/remote/code/sdkconfig.old
+--- a/remote/code/sdkconfig.old
++++ b/remote/code/sdkconfig.old
+@@ -377 +377 @@
+-CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
++# CONFIG_ESPTOOLPY_FLASHSIZE_2MB is not set

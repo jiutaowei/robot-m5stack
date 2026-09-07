@@ -1,0 +1,8 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+python-multipart>=0.0.9
+# 百炼（DashScope）语音转写 SDK；纪要总结走 OpenAI 兼容端点（httpx 直调）
+dashscope>=1.20
+# AI(ASR/LLM/TTS) 配置 yaml 读写
+PyYAML>=6.0

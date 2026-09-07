@@ -1,0 +1,19 @@
+diff --git a/remote/code/main/joystick/m5_i2c_bridge.cpp b/remote/code/main/joystick/m5_i2c_bridge.cpp
+--- a/remote/code/main/joystick/m5_i2c_bridge.cpp
++++ b/remote/code/main/joystick/m5_i2c_bridge.cpp
+@@ -17,2 +17,2 @@ extern "C" bool m5_i2c_bridge_init(uint8_t address)
+-    if (!m5::M5.In_I2C.isEnabled()) {
+-        m5::M5.In_I2C.begin(I2C_NUM_0, 0, 26);
++    if (!M5.In_I2C.isEnabled()) {
++        M5.In_I2C.begin(I2C_NUM_0, 0, 26);
+@@ -20,2 +20,2 @@ extern "C" bool m5_i2c_bridge_init(uint8_t address)
+-    return m5::M5.In_I2C.isEnabled() &&
+-           m5::M5.In_I2C.scanID(address, kJoystickI2cFrequency);
++    return M5.In_I2C.isEnabled() &&
++           M5.In_I2C.scanID(address, kJoystickI2cFrequency);
+@@ -26 +26 @@ extern "C" bool m5_i2c_bridge_read(uint8_t address, uint8_t reg, uint8_t *data, size_t length)
+-    if (!m5::M5.In_I2C.isEnabled()) {
++    if (!M5.In_I2C.isEnabled()) {
+@@ -29 +29 @@ extern "C" bool m5_i2c_bridge_read(uint8_t address, uint8_t reg, uint8_t *data, size_t length)
+-    return m5::M5.In_I2C.readRegister(address, reg, data, length, kJoystickI2cFrequency);
++    return M5.In_I2C.readRegister(address, reg, data, length, kJoystickI2cFrequency);

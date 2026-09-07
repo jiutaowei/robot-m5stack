@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>米宝一号 · 功能架构图</title>
+<style>
+:root {
+  --brand: #2DBE8D;
+  --brand-dark: #1a9b6f;
+  --surface: #f8fafb;
+  --surface-card: #ffffff;
+  --ink: #1a2c35;
+  --ink-muted: #6b8a94;
+  --border: #dfe8ec;
+  --bg-section: #f0f7f5;
+  --accent-ai: #7C5CFC;
+  --accent-mfg: #e8913a;
+  --accent-iqt: #2DBE8D;
+  --accent-file: #5b9bd6;
+  --accent-set: #8e7cc3;
+  --accent-sys: #5c6b7a;
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  background: var(--surface);
+  color: var(--ink);
+  line-height: 1.6;
+  padding: 24px;
+}
+
+.page-header {
+  text-align: center;
+  padding: 40px 20px 32px;
+  position: relative;
+}
+
+.page-header::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 120px; height: 120px;
+  background: radial-gradient(circle, rgba(45,190,141,0.15) 0%, transparent 70%);
+  border-radius: 50%;
+  z-index: 0;
+}
+
+.mibao-logo {
+  width: 80px; height: 80px;
+  margin: 0 auto 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.mibao-logo svg {
+  width: 100%; height: 100%;
+  filter: drop-shadow(0 4px 12px rgba(45,190,141,0.3));
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.5px;
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+
+/* Layer sections */
+.layer-section {
+  max-width: 1200px;
+  margin: 0 auto 24px;
+  background: var(--surface-card);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.layer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--bg-section);
+  border-bottom: 1px solid var(--border);
+}
+
+.layer-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--brand);
+  color: #fff;
+}
+
+.layer-badge.system { background: var(--accent-sys); }
+.layer-badge.backend { background: var(--accent-mfg); }
+.layer-badge.ai { background: var(--accent-ai); }
+
+.layer-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.layer-desc {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+/* App grid */
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  padding: 24px;
+}
+
+.app-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 20px;
+  transition: all 0.2s ease;
+  cursor: default;
+  position: relative;
+}
+
+.app-card:hover {
+  border-color: var(--brand);
+  box-shadow: 0 4px 16px rgba(45,190,141,0.1);
+  transform: translateY(-2px);
+}
+
+.app-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.app-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.app-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+.app-icon.ai { background: linear-gradient(135deg, #7C5CFC 0%, #5b3fd4 100%); }
+.app-icon.meeting { background: linear-gradient(135deg, #e8913a 0%, #d07020 100%); }
+.app-icon.personal { background: linear-gradient(135deg, #5b9bd6 0%, #3a7bc0 100%); }
+.app-icon.iot { background: linear-gradient(135deg, #2DBE8D 0%, #1a9b6f 100%); }
+.app-icon.files { background: linear-gradient(135deg, #8e7cc3 0%, #7b65b0 100%); }
+.app-icon.setup { background: linear-gradient(135deg, #5c6b7a 0%, #4a5865 100%); }
+
+.app-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.app-tag {
+  font-size: 10px;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+
+.app-features {
+  list-style: none;
+  padding: 0;
+}
+
+.app-features li {
+  font-size: 12px;
+  color: var(--ink-muted);
+  padding: 4px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.5;
+}
+
+.app-features li::before {
+  content: '→';
+  color: var(--brand);
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Detail section inside card */
+.detail-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.detail-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 11px;
+}
+
+.detail-label {
+  color: var(--ink-muted);
+}
+
+.detail-value {
+  color: var(--ink);
+  font-weight: 500;
+  font-family: "SF Mono", SFMono-Regular, monospace;
+  font-size: 10px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.status-dot.done { background: var(--brand); }
+.status-dot.todo { background: #e8913a; }
+.status-dot.wip { background: #5b9bd6; }
+
+/* Connection flow */
+.flow-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.flow-arrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+
+.flow-arrow::before, .flow-arrow::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Backend section */
+.backend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 24px;
+}
+
+.backend-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 20px;
+}
+
+.backend-card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-table {
+  width: 100%;
+  font-size: 11px;
+  border-collapse: collapse;
+}
+
+.api-table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.api-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(223,232,236,0.5);
+  vertical-align: top;
+}
+
+.api-table tr:last-child td {
+  border-bottom: none;
+}
+
+.api-method {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 10px;
+  margin-right: 4px;
+}
+
+.api-method.get { background: #e8f5e9; color: #2e7d32; }
+.api-method.post { background: #e3f2fd; color: #1565c0; }
+.api-method.delete { background: #fce4ec; color: #c62828; }
+
+.api-path {
+  font-family: "SF Mono", SFMono-Regular, monospace;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+/* AI section */
+.ai-section {
+  max-width: 1200px;
+  margin: 0 auto 24px;
+}
+
+.ai-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 24px;
+}
+
+@media (max-width: 768px) {
+  .ai-grid { grid-template-columns: 1fr; }
+}
+
+.ai-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 20px;
+  text-align: center;
+}
+
+.ai-card-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.ai-card h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.ai-card p {
+  font-size: 12px;
+  color: var(--ink-muted);
+  line-height: 1.6;
+}
+
+.ai-card .model {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 3px 10px;
+  background: var(--bg-section);
+  border-radius: 20px;
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--ink);
+}
+
+/* Footer warning */
+.warning-footer {
+  max-width: 1200px;
+  margin: 24px auto 0;
+  padding: 16px 24px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: #f57f17;
+  text-align: center;
+}
+
+/* Sub-sections */
+.section-label {
+  max-width: 1200px;
+  margin: 0 auto 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding-left: 4px;
+}
+
+/* Divider */
+.divider {
+  max-width: 1200px;
+  margin: 0 auto 24px;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Todo items */
+.todo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  padding: 24px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.todo-item .status-dot {
+  width: 8px; height: 8px;
+  flex-shrink: 0;
+}
+
+/* Mibao face image styling */
+.mibao-face-row {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  padding: 24px;
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.mibao-face-item {
+  text-align: center;
+}
+
+.mibao-face-item img {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid var(--border);
+  transition: border-color 0.2s;
+}
+
+.mibao-face-item:hover img {
+  border-color: var(--brand);
+}
+
+.mibao-face-item span {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-muted);
+  margin-top: 6px;
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="page-header">
+  <div class="mibao-logo">
+    <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="40" cy="40" r="38" fill="#2DBE8D" opacity="0.1"/>
+      <circle cx="40" cy="40" r="28" fill="#2DBE8D" opacity="0.2"/>
+      <ellipse cx="30" cy="35" rx="6" ry="7" fill="#1a2c35"/>
+      <ellipse cx="50" cy="35" rx="6" ry="7" fill="#1a2c35"/>
+      <ellipse cx="30" cy="35" rx="3" ry="3.5" fill="white"/>
+      <ellipse cx="50" cy="35" rx="3" ry="3.5" fill="white"/>
+      <path d="M 30 50 Q 40 58 50 50" stroke="#1a2c35" stroke-width="2" stroke-linecap="round" fill="none"/>
+      <ellipse cx="24" cy="42" rx="4" ry="2.5" fill="#2DBE8D" opacity="0.3"/>
+      <ellipse cx="56" cy="42" rx="4" ry="2.5" fill="#2DBE8D" opacity="0.3"/>
+    </svg>
+  </div>
+  <h1>米宝一号 · 产品功能架构</h1>
+  <p class="subtitle">Mibao One — Full Product Architecture Overview</p>
+</div>
+
+<!-- Face showcase -->
+<div class="layer-section" style="margin-top:0;">
+  <div class="mibao-face-row">
+    <div class="mibao-face-item">
+      <img src="UI参考图/看你_睁眼.png" alt="米宝睁眼">
+      <span>睁眼</span>
+    </div>
+    <div class="mibao-face-item">
+      <img src="UI参考图/看你_闭眼.png" alt="米宝闭眼">
+      <span>闭眼</span>
+    </div>
+    <div class="mibao-face-item">
+      <img src="UI参考图/认真工作.png" alt="认真工作">
+      <span>工作</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 设备端 App 层 ===== -->
+<p class="section-label">设备端 · 应用层（Mooncake Launcher）</p>
+<div class="layer-section">
+  <div class="layer-header">
+    <span class="layer-badge">固件</span>
+    <span class="layer-title">6 个主 App · 2.4GHz ESP32-S3 · 320×240 触摸屏</span>
+    <span class="layer-desc">启动命令：./scripts/build.sh → ./scripts/flash.sh</span>
+  </div>
+
+  <div class="app-grid">
+
+    <!-- AI对话 -->
+    <div class="app-card">
+      <div class="app-card-header">
+        <div class="app-icon ai">
+          <img src="UI参考图/米宝_对话.png" alt="对话" style="border-radius:12px;width:100%;height:100%;object-fit:cover;">
+        </div>
+        <div>
+          <div class="app-name">AI 对话</div>
+          <div class="app-tag">xiaozhi-esp32 · WebSocket</div>
+        </div>
+      </div>
+      <ul class="app-features">
+        <li>点击图标进入 xiaozhi 对话界面</li>
+        <li>语音唤醒词："米宝米宝"（待实现）</li>
+        <li>系统人设：金禾天成农业专家</li>
+        <li>ASR → LLM → TTS 全链路云端</li>
+        <li>屏幕显示 StackChan 表情 + 对话框</li>
+        <li>MCP 工具：控制舵机/LED/提醒</li>
+      </ul>
+      <div class="detail-section">
+        <div class="detail-title">技术细节</div>
+        <div class="detail-row"><span class="detail-label">WebSocket</span><span class="detail-value">ws://IP:8001/xiaozhi/v1/</span></div>
+        <div class="detail-row"><span class="detail-label">OTA URL</span><span class="detail-value">http://IP:8003/xiaozhi/ota/</span></div>
+        <div class="detail-row"><span class="detail-label">状态</span><span class="detail-value"><span class="status-dot done"></span>已就绪（需连接服务器）</span></div>
+      </div>
+    </div>
+
+    <!-- 会议录音 -->
+    <div class="app-card">
+      <div class="app-card-header">
+        <div class="app-icon meeting">
+          <img src="UI参考图/米宝_开会.png" alt="会议" style="border-radius:12px;width:100%;height:100%;object-fit:cover;">
+        </div>
+        <div>
+          <div class="app-name">会议录音</div>
+          <div class="app-tag">录音 → 上传 → 转写 → 纪要</div>
+        </div>
+      </div>
+      <ul class="app-features">
+        <li>按住开始/停止录音（屏幕按键）</li>
+        <li>文件名格式：meeting_YYYYMMDD_HHMMSS.wav</li>
+        <li>自动上传到 upload_url /api/recording/upload</li>
+        <li>支持在线播放、下载、删除录音文件</li>
+        <li>一键转写（paraformer-realtime-v2）</li>
+        <li>一键生成会议纪要（qwen-plus）</li>
+      </ul>
+      <div class="detail-section">
+        <div class="detail-title">后续规划</div>
+        <div class="detail-row"><span class="detail-label">5分钟分段</span><span class="detail-value"><span class="status-dot todo"></span>长会议自动分段</span></div>
+        <div class="detail-row"><span class="detail-label">与后端对接</span><span class="detail-value"><span class="status-dot wip"></span>上传已完成，转写/纪要待打通</span></div>
+      </div>
+    </div>
+
+    <!-- 个人灵感 -->
+    <div class="app-card">
+      <div class="app-card-header">
+        <div class="app-icon personal">
+          <img src="UI参考图/米宝_个人灵感.png" alt="个人灵感" style="border-radius:12px;width:100%;height:100%;object-fit:cover;">
+        </div>
+        <div>
+          <div class="app-name">个人灵感</div>
+          <div class="app-tag">语音备忘录 · 本地+云端</div>
+        </div>
+      </div>
+      <ul class="app-features">
+        <li>语音备忘录，随时随地记录灵感</li>
+        <li>文件名格式：personal_YYYYMMDD_HHMMSS.wav</li>
+        <li>存储路径：/sdcard/personal/</li>
+        <li>支持在线播放、下载、删除</li>
+        <li>与会议录音共享后端上传接口</li>
+        <li>后续区分两类录音的 type 字段</li>
+      </ul>
+      <div class="detail-section">
+        <div class="detail-title">后续规划</div>
+        <div class="detail-row"><span class="detail-label">与会议录音合并</span><span class="detail-value"><span class="status-dot todo"></span>统一 type 字段，Web端分类查看</span></div>
+      </div>
+    </div>
+
+    <!-- 物联网 -->
+    <div class="app-card">
+      <div class="app-card-header">
+        <div class="app-icon iot">
+          <img src="UI参考图/米宝_物联网.png" alt="物联网" style="border-radius:12px;width:100%;height:100%;object-fit:cover;">
+        </div>
+        <div>
+          <div class="app-name">物联网</div>
+          <div class="app-tag">硅基一号温室 · 2×2 控制网格</div>
+        </div>
+      </div>
+      <ul class="app-features">
+        <li>2×2 网格：灯 / 风扇 / 水泵 / 加热垫</li>
+        <li>点击即控制，立即反馈状态</li>
+        <li>HTTP POST 到 iot_url /actuator_control</li>
+        <li>参数：actuator + action(on/off) + duration</li>
+        <li>duration=0 表示持续运行</li>
+        <li>MCP 工具：greenhouse.control_actuator</li>
+      </ul>
+      <div class="detail-section">
+        <div class="detail-title">技术细节</div>
+        <div class="detail-row"><span class="detail-label">目标地址</span><span class="detail-value">http://10.51.1.205:5000</span></div>
+        <div class="detail-row"><span class="detail-label">控制接口</span><span class="detail-value">POST /actuator_control</span></div>
+        <div class="detail-row"><span class="detail-label">AI 调用</span><span class="detail-value"><span class="status-dot done"></span>xiaozhi 可通过 MCP 控制</span></div>
+      </div>
+    </div>
+
+    <!-- 文件管理 -->
+    <div class="app-card">
+      <div class="app-card-header">
+        <div class="app-icon files">📁</div>
+        <div>
+          <div class="app-name">文件管理</div>
+          <div class="app-tag">SD 卡文件系统浏览</div>
+        </div>
+      </div>
+      <ul class="app-features">
+        <li>浏览 SD 卡中的录音文件（meeting / personal）</li>
+        <li>点击文件名播放录音（在线 WAV 播放）</li>
+        <li>长按或操作菜单 → 重命名文件</li>
+        <li>长按或操作菜单 → 删除文件</li>
+        <li>显示文件大小和修改时间</li>
+        <li>支持多级目录浏览</li>
+      </ul>
+      <div class="detail-section">
+        <div class="detail-title">技术细节</div>
+        <div class="detail-row"><span class="detail-label">文件系统</span><span class="detail-value">FAT32 via SPI</span></div>
+        <div class="detail-row"><span class="detail-label">播放</span><span class="detail-value"><span class="status-dot done"></span>闪退修复已验证</span></div>
+        <div class="detail-row"><span class="detail-label">重命名/删除</span><span class="detail-value"><span class="status-dot wip"></span>UI 已修复，待真机验证</span></div>
+      </div>
+    </div>
+
+    <!-- 设置 -->
+    <div class="app-card">
+      <div class="app-card-header">
+        <div class="app-icon setup">⚙️</div>
+        <div>
+          <div class="app-name">设置</div>
+          <div class="app-tag">NVS 配置 · 网络 · 设备</div>
+        </div>
+      </div>
+      <ul class="app-features">
+        <li><strong>Server URLs</strong>：upload_url / iot_url / ota_url</li>
+        <li><strong>Wi-Fi 配网</strong>：Hotspot Setup（192.168.4.1）</li>
+        <li><strong>AI 对话开关</strong>：ai_chat_enabled（NVS）</li>
+        <li><strong>开机直进 AI</strong>：startAiAgentOnBoot（NVS）</li>
+        <li><strong>自动配网</strong>：auto_prov（NVS）</li>
+        <li><strong>音量调节</strong>：扬声器音量永久保存</li>
+        <li><strong>屏幕亮度</strong>：背光亮度调节</li>
+        <li><strong>关于</strong>：固件版本 / MAC 地址 / 电量</li>
+      </ul>
+      <div class="detail-section">
+        <div class="detail-title">NVS 命名空间</div>
+        <div class="detail-row"><span class="detail-label">mibao namespace</span><span class="detail-value">upload_url / iot_url / ota_url</span></div>
+        <div class="detail-row"><span class="detail-label">mibao namespace</span><span class="detail-value">ai_chat / auto_prov</span></div>
+        <div class="detail-row"><span class="detail-label">xiaozhi namespace</span><span class="detail-value">boot_ai / idle_sec / ext_pwr / idle_lv</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===== AI 层 ===== -->
+<p class="section-label">AI 对话 · 链路层</p>
+<div class="layer-section">
+  <div class="layer-header">
+    <span class="layer-badge ai">AI</span>
+    <span class="layer-title">xiaozhi-esp32 · 阿里云百炼 · WebSocket 双工</span>
+  </div>
+
+  <div class="ai-grid">
+    <div class="ai-card">
+      <div class="ai-card-icon">🎙️</div>
+      <h3>语音识别 ASR</h3>
+      <p>设备采集 16kHz 单声道 PCM 音频，通过 WebSocket 实时流式上传。服务端使用阿里云百炼 Paraformer 模型进行语音转文字。</p>
+      <span class="model">paraformer-realtime-v2</span>
+    </div>
+    <div class="ai-card">
+      <div class="ai-card-icon">🧠</div>
+      <h3>大语言模型 LLM</h3>
+      <p>收到转写文本后，以"金禾天成农业专家"人设调用 LLM。返回自然语言回复，支持工具调用（MCP）控制设备。</p>
+      <span class="model">qwen-plus（百炼）</span>
+    </div>
+    <div class="ai-card">
+      <div class="ai-card-icon">🔊</div>
+      <h3>语音合成 TTS</h3>
+      <p>LLM 返回文本后，使用 CosyVoice 模型合成语音。服务端将 PCM 转为 Opus 编码，通过 WebSocket 推回设备播放。</p>
+      <span class="model">cosyvoice-v2 / longcheng_v2</span>
+    </div>
+  </div>
+
+  <div style="padding: 0 24px 24px;">
+    <div style="background: var(--bg-section); border-radius: var(--radius-sm); padding: 16px 20px; font-size: 12px; color: var(--ink-muted); line-height: 2;">
+      <strong style="color:var(--ink)">数据流向：</strong><br>
+      🎤 设备麦克风 → Opus 编码 → WebSocket → xiaozhi-server → ASR → LLM(MCP工具) → TTS → Opus → WebSocket → 📢 设备扬声器<br>
+      <strong style="color:var(--ink)">系统提示词：</strong>农业专家，精通作物栽培/水肥/植保/温室环控，回答口语化便于语音播报
+    </div>
+  </div>
+</div>
+
+<!-- ===== 后端服务层 ===== -->
+<p class="section-label">后端服务层</p>
+<div class="layer-section">
+  <div class="layer-header">
+    <span class="layer-badge system">后端</span>
+    <span class="layer-title">mibao-server · FastAPI · SQLite · 端口 8000</span>
+    <span class="layer-desc">统一管理页：http://localhost:8000/</span>
+  </div>
+
+  <div class="backend-grid">
+
+    <!-- 录音管理 -->
+    <div class="backend-card">
+      <h3>📼 录音管理</h3>
+      <table class="api-table">
+        <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+        <tr><td><span class="api-method post">POST</span></td><td class="api-path">/api/recording/upload</td><td>设备上传 WAV 文件</td></tr>
+        <tr><td><span class="api-method get">GET</span></td><td class="api-path">/api/recording/list?type=&page=&page_size=</td><td>分页列表（meeting/personal）</td></tr>
+        <tr><td><span class="api-method get">GET</span></td><td class="api-path">/api/recording/{id}</td><td>下载录音文件</td></tr>
+        <tr><td><span class="api-method delete">DELETE</span></td><td class="api-path">/api/recording/{id}</td><td>删除录音（文件+记录）</td></tr>
+        <tr><td><span class="api-method post">POST</span></td><td class="api-path">/api/recording/{id}/transcribe</td><td>异步转写（百炼 ASR）</td></tr>
+        <tr><td><span class="api-method post">POST</span></td><td class="api-path">/api/recording/{id}/summarize</td><td>纪要总结（百炼 LLM）</td></tr>
+        <tr><td><span class="api-method get">GET</span></td><td class="api-path">/api/recording/{id}/transcript</td><td>查看转写结果+总结</td></tr>
+      </table>
+    </div>
+
+    <!-- IoT 代理 -->
+    <div class="backend-card">
+      <h3>🏭 物联网代理</h3>
+      <table class="api-table">
+        <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+        <tr><td><span class="api-method get">GET</span></td><td class="api-path">/api/iot/devices</td><td>执行器清单（4个默认设备）</td></tr>
+        <tr><td><span class="api-method post">POST</span></td><td class="api-path">/api/iot/control</td><td>转发控制指令到树莓派 Flask</td></tr>
+      </table>
+      <div class="detail-section" style="margin-top:12px;">
+        <div class="detail-title">转发目标</div>
+        <div class="detail-row"><span class="detail-label">树莓派地址</span><span class="detail-value">http://10.51.1.205:5000</span></div>
+        <div class="detail-row"><span class="detail-label">执行器</span><span class="detail-value">fan / pump / light / heat</span></div>
+        <div class="detail-row"><span class="detail-label">控制方式</span><span class="detail-value">POST actuator_control</span></div>
+      </div>
+    </div>
+
+    <!-- 设备配置 -->
+    <div class="backend-card">
+      <h3>📟 设备配置管理</h3>
+      <table class="api-table">
+        <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+        <tr><td><span class="api-method get">GET</span></td><td class="api-path">/api/device/config</td><td>设备开机自动拉取</td></tr>
+        <tr><td><span class="api-method get">GET</span></td><td class="api-path">/api/admin/device</td><td>管理页读取配置</td></tr>
+        <tr><td><span class="api-method post">POST</span></td><td class="api-path">/api/admin/device</td><td>管理页保存配置</td></tr>
+      </table>
+      <div class="detail-section" style="margin-top:12px;">
+        <div class="detail-title">返回字段（JSON）</div>
+        <div class="detail-row"><span class="detail-label">upload_url</span><span class="detail-value">录音上传地址</span></div>
+        <div class="detail-row"><span class="detail-label">iot_url</span><span class="detail-value">IoT 控制基础地址</span></div>
+        <div class="detail-row"><span class="detail-label">ota_url</span><span class="detail-value">OTA 升级服务器地址</span></div>
+      </div>
+    </div>
+
+    <!-- AI 配置 -->
+    <div class="backend-card">
+      <h3>🧠 AI 配置管理</h3>
+      <table class="api-table">
+        <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+        <tr><td><span class="api-method get">GET</span></td><td class="api-path">/api/admin/ai</td><td>读取 ASR/LLM/TTS 配置（Key 掩码）</td></tr>
+        <tr><td><span class="api-method post">POST</span></td><td class="api-path">/api/admin/ai</td><td>保存配置（写入 xiaozhi-server/.config.yaml）</td></tr>
+      </table>
+      <div class="detail-section" style="margin-top:12px;">
+        <div class="detail-title">可配置项</div>
+        <div class="detail-row"><span class="detail-label">ASR 模型</span><span class="detail-value">paraformer-realtime-v2</span></div>
+        <div class="detail-row"><span class="detail-label">LLM 模型</span><span class="detail-value">qwen-plus</span></div>
+        <div class="detail-row"><span class="detail-label">TTS 模型</span><span class="detail-value">cosyvoice-v2 / longcheng_v2</span></div>
+        <div class="detail-row"><span class="detail-label">密钥</span><span class="detail-value">sk-ws-xxx（业务空间 Key）</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===== 待定/规划功能 ===== -->
+<p class="section-label">待开发 / 规划功能</p>
+<div class="layer-section">
+  <div class="layer-header">
+    <span class="layer-badge" style="background: var(--accent-mfg);">TODO</span>
+    <span class="layer-title">路线图</span>
+  </div>
+
+  <div class="todo-grid">
+    <div class="todo-item">
+      <span class="status-dot todo"></span>
+      <span><strong>语音唤醒词</strong> — "米宝米宝" · MultiNet6 模型 · 熄屏可唤醒</span>
+    </div>
+    <div class="todo-item">
+      <span class="status-dot todo"></span>
+      <span><strong>OTA 升级</strong> — 配置 ota_url · 测试设备端 OTA 流程</span>
+    </div>
+    <div class="todo-item">
+      <span class="status-dot wip"></span>
+      <span><strong>会议录音 5 分钟分段</strong> — 长会议自动切分段保存</span>
+    </div>
+    <div class="todo-item">
+      <span class="status-dot todo"></span>
+      <span><strong>录音类型合并</strong> — meeting/personal 统一 type 字段，Web端分类</span>
+    </div>
+    <div class="todo-item">
+      <span class="status-dot todo"></span>
+      <span><strong>BLE 配网</strong> — 第二配网通道，手机 App 配网</span>
+    </div>
+    <div class="todo-item">
+      <span class="status-dot todo"></span>
+      <span><strong>xiaozhi 屏幕返回键</strong> — xiaozhi 界面加屏幕返回按钮</span>
+    </div>
+    <div class="todo-item">
+      <span class="status-dot todo"></span>
+      <span><strong>SD 卡挂载加固</strong> — 惰性重挂 + 降频重试（代码已实现）</span>
+    </div>
+    <div class="todo-item">
+      <span class="status-dot done"></span>
+      <span><strong>配网修复</strong> — 门控死局 + band_mode 时序（已闭环）</span>
+    </div>
+  </div>
+</div>
+
+<!-- Warning footer -->
+<div class="warning-footer">
+  ⚠️ 警告：设备端 AI 对话需要同时运行 xiaozhi-server（Python 3.10 venv），设备 WiFi 必须能访问服务器 IP；
+  API Key 存放在 04_API KEY/ 目录下，严禁入库 / 提交 git；
+  编译必须在 macOS Terminal.app 中执行（Trae 沙盒屏蔽 USB 访问和 ninja 写入）；
+  NVS 配置在每次 erase_flash 后丢失，重新烧录后需重新配网。
+</div>
+
+</body>
+</html>

@@ -1,0 +1,127 @@
+diff --git a/remote/code/main/CMakeLists.txt b/remote/code/main/CMakeLists.txt
+--- a/remote/code/main/CMakeLists.txt
++++ b/remote/code/main/CMakeLists.txt
+@@ -1,16 +1,14 @@
+ set(SOURCES
+     esp_now/esp_now_init.c
+     joystick/joystick_handle.c
++    joystick/m5_i2c_bridge.cpp
+     ui/ui_running_screen.c
+     ui/ui_setup_screen.c
+     ui/ui_imu_screen.c
+     ui/ui.c
+     ui/updown_img.c
+     lvgl_port.cpp
+     StackChan-RemoteControl-ESPNow.cpp
+ )
+ 
+-# joystick_handle.c uses M5Unified's C++ I2C wrapper so it must be compiled as C++.
+-set_source_files_properties(joystick/joystick_handle.c PROPERTIES LANGUAGE CXX)
+-
+ idf_component_register(SRCS ${SOURCES}
+                     INCLUDE_DIRS 
+diff --git a/remote/code/main/joystick/joystick_handle.c b/remote/code/main/joystick/joystick_handle.c
+--- a/remote/code/main/joystick/joystick_handle.c
++++ b/remote/code/main/joystick/joystick_handle.c
+@@ -6,5 +6,3 @@
+ #include "joystick_handle.h"
+-#include "M5Unified.h"
+ 
+-static constexpr uint8_t JOYSTICK_I2C_ADDRESS = 0x54;
+-static constexpr uint32_t JOYSTICK_I2C_FREQUENCY = 100000;
++static const uint8_t JOYSTICK_I2C_ADDRESS = 0x54;
+@@ -23,17 +22,6 @@ static void joystick_i2c_init()
+ static void joystick_i2c_init()
+ {
+-    // M5Unified already owns the internal I2C controller. Reuse it instead of
+-    // creating a legacy i2c_bus handle on the same port.
+-    if (!m5::M5.In_I2C.isEnabled()) {
+-        m5::M5.In_I2C.begin(I2C_NUM_0, 0, 26);
+-    }
+-
+-    if (!m5::M5.In_I2C.isEnabled()) {
+-        ESP_LOGE("I2C Joystick", "M5Unified internal I2C is not available");
+-        return;
+-    }
+-
+-    if (m5::M5.In_I2C.scanID(JOYSTICK_I2C_ADDRESS, JOYSTICK_I2C_FREQUENCY)) {
++    if (m5_i2c_bridge_init(JOYSTICK_I2C_ADDRESS)) {
+         ESP_LOGI("I2C Joystick", "Found joystick at address 0x%02X", JOYSTICK_I2C_ADDRESS);
+     } else {
+         ESP_LOGW("I2C Joystick", "Joystick not found at address 0x%02X", JOYSTICK_I2C_ADDRESS);
+@@ -58,4 +57,4 @@ static void joystick_read_xy(uint16_t *joyX, uint16_t *joyY)
+     uint8_t data[4];
+-    bool ret = m5::M5.In_I2C.readRegister(JOYSTICK_I2C_ADDRESS, 0x00, data, 2, JOYSTICK_I2C_FREQUENCY);
++    bool ret = m5_i2c_bridge_read(JOYSTICK_I2C_ADDRESS, 0x00, data, 2);
+     vTaskDelay(20 / portTICK_PERIOD_MS);
+-    ret = m5::M5.In_I2C.readRegister(JOYSTICK_I2C_ADDRESS, 0x02, &data[2], 2, JOYSTICK_I2C_FREQUENCY) && ret;
++    ret = m5_i2c_bridge_read(JOYSTICK_I2C_ADDRESS, 0x02, &data[2], 2) && ret;
+diff --git a/remote/code/main/joystick/joystick_handle.h b/remote/code/main/joystick/joystick_handle.h
+--- a/remote/code/main/joystick/joystick_handle.h
++++ b/remote/code/main/joystick/joystick_handle.h
+@@ -13,2 +13,3 @@
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/task.h"
++#include "m5_i2c_bridge.h"
+diff --git a/remote/code/main/joystick/m5_i2c_bridge.h b/remote/code/main/joystick/m5_i2c_bridge.h
+new file mode 100644
+--- /dev/null
++++ b/remote/code/main/joystick/m5_i2c_bridge.h
+@@ -0,0 +1,21 @@
++/*
++ * Bridge between the C joystick driver and M5Unified's C++ I2C implementation.
++ */
++#ifndef M5_I2C_BRIDGE_H
++#define M5_I2C_BRIDGE_H
++
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++bool m5_i2c_bridge_init(uint8_t address);
++bool m5_i2c_bridge_read(uint8_t address, uint8_t reg, uint8_t *data, size_t length);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/remote/code/main/joystick/m5_i2c_bridge.cpp b/remote/code/main/joystick/m5_i2c_bridge.cpp
+new file mode 100644
+--- /dev/null
++++ b/remote/code/main/joystick/m5_i2c_bridge.cpp
+@@ -0,0 +1,30 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * Use the I2C bus already initialized and owned by M5Unified. The previous
++ * implementation created a legacy i2c_bus handle on the same controller,
++ * which aborts on ESP-IDF 5.5 when M5Unified uses the new driver.
++ */
++#include "m5_i2c_bridge.h"
++#include "M5Unified.h"
++
++namespace {
++constexpr uint32_t kJoystickI2cFrequency = 100000;
++}
++
++extern "C" bool m5_i2c_bridge_init(uint8_t address)
++{
++    if (!m5::M5.In_I2C.isEnabled()) {
++        m5::M5.In_I2C.begin(I2C_NUM_0, 0, 26);
++    }
++    return m5::M5.In_I2C.isEnabled() &&
++           m5::M5.In_I2C.scanID(address, kJoystickI2cFrequency);
++}
++
++extern "C" bool m5_i2c_bridge_read(uint8_t address, uint8_t reg, uint8_t *data, size_t length)
++{
++    if (!m5::M5.In_I2C.isEnabled()) {
++        return false;
++    }
++    return m5::M5.In_I2C.readRegister(address, reg, data, length, kJoystickI2cFrequency);
++}

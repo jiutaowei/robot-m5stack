@@ -1,0 +1,39 @@
+# ===== 密钥与敏感信息（绝不上传公开仓库） =====
+04_API KEY/
+**/data/.config.yaml
+**/data/.wakeup_words.yaml
+*.xlsx
+*.key
+*.pem
+
+# ===== 构建产物 / 编译缓存 =====
+robot-updating/fw/build/
+robot-updating/fw/managed_components/
+robot-updating/fw/dependencies.lock
+robot-updating/fw/sdkconfig
+robot-updating/fw/sdkconfig.old
+**/__pycache__/
+*.pyc
+*.o
+*.a
+
+# ===== 运行时数据 / 缓存 / 日志 =====
+**/tmp/
+xiaozhi-server/tmp/
+xiaozhi-server/music/
+xiaozhi-server/models/
+xiaozhi-server/logs/
+xiaozhi-server/.venv/
+xiaozhi-server/data/bin/
+*.log
+serial_log*.txt
+
+# ===== 大体积/参考素材（可另行归档，不入 git） =====
+UI参考图/
+05_智能手表参考/
+archive/
+米宝开会.png
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
