@@ -3,6 +3,10 @@
 基于 **M5Stack CoreS3** 的桌面 AI 机器人「米宝一号」（StackChan 形态）。
 含完整固件源码、AI 对话服务器、产品文档。
 
+## 🖥️ 平台使用指南
+- **Windows 电脑**（编译固件 + 跑服务器）：见 [WINDOWS_使用指南.md](WINDOWS_使用指南.md)
+- **macOS 电脑**：见下方各节（脚本为 bash，适配 Mac）
+
 ---
 
 ## 📦 克隆后目录结构
