@@ -147,27 +147,38 @@ if not exist "core\connection.py" (
 if "%MISSING%"=="0" echo   OK - all required files present
 echo.
 
-REM ---------- ensure data folder exists ----------
-REM data/ is git-ignored (it holds your API keys), so a fresh clone has no data folder.
+REM ---------- ensure data folder + config file exist ----------
+REM data/ is git-ignored (it holds your API keys), so a fresh clone never has it.
+REM Create it, and seed .config.yaml from the template so the user only fills in keys.
 if not exist "data" mkdir data
 if not exist "data\bin" mkdir "data\bin"
 
+set "SEEDED=0"
+if not exist "data\.config.yaml" (
+    if exist ".config.yaml.template" (
+        copy /Y ".config.yaml.template" "data\.config.yaml" >nul
+        set "SEEDED=1"
+    )
+)
+
 REM ---------- result ----------
 echo ============================================================
-if not exist "data\.config.yaml" (
-    echo   [ACTION REQUIRED] data\.config.yaml is MISSING
+if "%SEEDED%"=="1" (
+    echo   [ACTION REQUIRED] data\.config.yaml was just created from the template.
     echo.
-    echo   This file holds YOUR API keys and is NOT in git,
-    echo   so a fresh git clone never contains it.
+    echo   Open it with Notepad and fill in YOUR api keys:
+    echo     ASR.Qwen3ASRFlash.api_key   ^(Aliyun DashScope, starts with sk-^)
+    echo     LLM.HezorLLM.api_key        ^(Hezor, starts with hzr_^)
     echo.
-    echo   Take it from your Mac:
-    echo     robot-updating/xiaozhi-server/data/.config.yaml
-    echo   and put it here:
+    echo   File path:
     echo     %CD%\data\.config.yaml
     echo.
-    echo   Tip: to create it by hand in Notepad, save with the file name
-    echo        ".config.yaml"   ^(include the double quotes^)
-    echo        and encoding UTF-8, otherwise Notepad appends .txt
+    echo   Or simply overwrite it with the copy from your Mac.
+) else if not exist "data\.config.yaml" (
+    echo   [ACTION REQUIRED] data\.config.yaml is MISSING
+    echo   It holds YOUR API keys and is NOT in git.
+    echo   Copy it from your Mac to:
+    echo     %CD%\data\.config.yaml
 ) else (
     echo   data\.config.yaml found - good.
 )

@@ -1,0 +1,58 @@
+# 米宝一号服务器配置（模板）
+#
+# 用法：把本文件复制到 data/.config.yaml，然后填入你自己的 API 密钥。
+#      Windows 部署脚本 setup_windows.bat 会自动完成复制。
+#
+# ⚠️ data/.config.yaml 含密钥，已被 .gitignore 排除，切勿提交到仓库。
+
+server:
+  ip: 0.0.0.0
+  port: 8001
+  http_port: 8003
+
+prompt: |
+  你是「米宝一号」，金禾天成的农业智能助手，一位经验丰富的农业专家。
+  你精通大田与设施农业：作物栽培、水肥管理、病虫害防治、温室环控、农机与灌溉设备。
+  回答要求：专业准确、贴近生产实际，先给结论再给操作建议；涉及用药用肥要给出安全注意事项。
+  语言简洁口语化，便于语音播报，单次回答一般不超过 120 字；不确定的内容如实说明。
+
+# 唤醒词（覆盖默认列表）
+wakeup_words:
+  - "米宝米宝"
+
+selected_module:
+  ASR: Qwen3ASRFlash
+  LLM: HezorLLM
+  TTS: EdgeTTS
+
+ASR:
+  # 阿里 paraformer 会把"稻飞虱"听错，改用 Qwen3-ASR-Flash（专业术语准确率高）。
+  # 非流式接口：用户说完一句才识别（延迟略高，准确率优先）。
+  Qwen3ASRFlash:
+    type: qwen3_asr_flash
+    # ↓↓↓ 填你的阿里云百炼(DashScope) API Key（sk- 开头）↓↓↓
+    api_key: "在这里填你的阿里云 DashScope API Key"
+    model_name: qwen3-asr-flash
+    output_dir: tmp/
+    enable_lid: true
+    enable_itn: true
+    language: "zh"
+    context: "你是农业智能助手米宝一号的语音识别模块，对话涉及水稻、稻飞虱、螟虫、病虫害防治、施肥、灌溉、温室大棚等农业专业术语，识别时优先保留农业术语原文。"
+
+LLM:
+  HezorLLM:
+    type: openai
+    base_url: https://hezor.com/api/v1/openai/latest
+    model_name: hezor-trusted-4
+    # ↓↓↓ 填你的 Hezor API Key（hzr_ 开头）↓↓↓
+    #    也可以换成其它 OpenAI 兼容服务（改 base_url / model_name / api_key）
+    api_key: "在这里填你的 Hezor API Key"
+    temperature: 0.7
+    max_tokens: 500
+
+TTS:
+  # 微软 Edge TTS：免费、无需 key
+  EdgeTTS:
+    type: edge
+    voice: zh-CN-XiaoxiaoNeural
+    output_dir: tmp/
