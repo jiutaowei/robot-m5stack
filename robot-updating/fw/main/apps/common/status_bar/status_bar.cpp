@@ -263,10 +263,16 @@ public:
         update();
     }
 
+    int _last_logged_status = -1;  // 上次已输出的 WiFi 状态（仅变化时打日志）
+
     void update() override
     {
         auto status = GetHAL().getWifiStatus();
-        ESP_LOGI("StatusBarWifi", "wifi status=%d", (int)status);
+        // 仅在状态变化时输出，避免每秒刷屏（排查联网问题时仍能看到变化过程）
+        if (static_cast<int>(status) != _last_logged_status) {
+            _last_logged_status = static_cast<int>(status);
+            ESP_LOGI("StatusBarWifi", "wifi status=%d", _last_logged_status);
+        }
         switch (status) {
             case WifiStatus::None:
                 _wifi_icon->setSrc(NULL);
@@ -335,7 +341,6 @@ public:
 
         if (GetHAL().millis() - _last_update_tick > 1000) {
             _last_update_tick = GetHAL().millis();
-            ESP_LOGI("StatusBarView", "widget refresh");
             for (auto& widget : _widgets) {
                 widget->update();
             }
@@ -430,7 +435,6 @@ void create_status_bar(uint32_t colorSecondary, uint32_t colorPrimary, lv_obj_t*
 
 void update_status_bar()
 {
-    ESP_LOGI("StatusBarView", "update_status_bar called, ptr=%d", _status_bar != nullptr);
     if (_status_bar) {
         _status_bar->update();
     }

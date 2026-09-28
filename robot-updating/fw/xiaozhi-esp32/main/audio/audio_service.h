@@ -166,9 +166,6 @@ private:
     TaskHandle_t audio_input_task_handle_ = nullptr;
     TaskHandle_t audio_output_task_handle_ = nullptr;
     TaskHandle_t opus_codec_task_handle_ = nullptr;
-    // opus_codec 任务的栈是否分配在 PSRAM（内部 RAM 不足时回退方案），
-    // 决定任务退出时用 vTaskDeleteWithCaps 还是 vTaskDelete。
-    bool opus_task_stack_in_psram_ = false;
     std::mutex audio_queue_mutex_;
     std::condition_variable audio_queue_cv_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;

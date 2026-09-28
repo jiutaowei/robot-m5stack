@@ -178,13 +178,6 @@ void CustomWakeWord::Feed(const std::vector<int16_t>& data) {
         
         esp_mn_state_t mn_state = multinet_->detect(multinet_model_data_, chunk.data());
         
-        // 临时调试：每 100 次检测打印一次状态，确认 detect 是否在被调用
-        static uint32_t detect_cnt = 0;
-        if ((++detect_cnt % 100) == 0) {
-            ESP_LOGI(TAG, "[dbg] detect called %u times, last state=%d, chunksize=%d",
-                     detect_cnt, (int)mn_state, chunksize);
-        }
-        
         if (mn_state == ESP_MN_STATE_DETECTED) {
             esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
             for (int i = 0; i < mn_result->num && running_; i++) {

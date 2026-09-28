@@ -1,6 +1,4 @@
 #include "audio_service.h"
-#include <esp_heap_caps.h>
-#include <freertos/idf_additions.h>
 #include <esp_log.h>
 #include <chrono>
 #include <cstring>
@@ -161,47 +159,28 @@ void AudioService::Start() {
     }, "audio_output", 2048, this, 4, &audio_output_task_handle_);
 #endif
 
-    /* Start the opus codec task */
+    /* Start the opus codec task（音频解码 → 播放的关键任务） */
     // 栈历史：24KB(2048*12) 在内存紧张时 xTaskCreate 失败 -> decode 无人消费，
     // "光张嘴没声音"；16KB(2048*8) 创建成功但 esp_opus 解码栈峰值超限 ->
     // "A stack overflow in task opus_codec" 崩溃重启。20KB 是两者之间的平衡点。
     //
-    // 关键修复：xTaskCreate 可能失败（返回 pdFAIL）而旧代码不检查返回值，
-    // 结果是解码任务根本没起来 —— 服务器发来的语音全堆在 decode 队列无人消费，
-    // 表现为"能看到在说话但完全没声音"。
-    // 内部 RAM 由于碎片化/IRAM 不可字节寻址，即使总量看起来充足也可能分配不到
-    // 连续 20KB，所以失败时回退到 PSRAM 分配任务栈（设备有 8MB PSRAM）。
-    BaseType_t opus_created = xTaskCreate([](void* arg) {
+    // 为什么用静态栈（xTaskCreateStatic）：
+    // 动态 xTaskCreate 需要 20KB **连续**内部 RAM，而本项目内部堆碎片化严重
+    // （实测空闲 96KB 但最大连续块仅 19456B < 20480B），导致创建失败；
+    // 旧代码又不检查返回值，于是解码任务根本没起来 —— 服务器发来的语音全堆在
+    // decode 队列无人消费，表现为"屏幕上在说话但完全没声音"。
+    // 静态栈在编译期分配（.bss），必定成功、位于内部 RAM（解码性能优于 PSRAM），
+    // 也不再受堆碎片影响。
+    static StackType_t opus_codec_stack[2048 * 10] __attribute__((aligned(16)));
+    static StaticTask_t opus_codec_tcb;
+    opus_codec_task_handle_ = xTaskCreateStatic([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
-        if (audio_service->opus_task_stack_in_psram_) {
-            vTaskDeleteWithCaps(NULL);
-        } else {
-            vTaskDelete(NULL);
-        }
-    }, "opus_codec", 2048 * 10, this, 2, &opus_codec_task_handle_);
+        vTaskDelete(NULL);
+    }, "opus_codec", 2048 * 10, this, 2, opus_codec_stack, &opus_codec_tcb);
 
-    if (opus_created != pdPASS) {
-        ESP_LOGW(TAG, "opus_codec: internal RAM failed (free8bit=%u largest=%u), falling back to PSRAM",
-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
-        for (int attempt = 0; attempt < 10 && opus_created != pdPASS; ++attempt) {
-            opus_task_stack_in_psram_ = true;
-            opus_created = xTaskCreateWithCaps([](void* arg) {
-                AudioService* audio_service = (AudioService*)arg;
-                audio_service->OpusCodecTask();
-                vTaskDeleteWithCaps(NULL);
-            }, "opus_codec", 2048 * 10, this, 2, &opus_codec_task_handle_, MALLOC_CAP_SPIRAM);
-            if (opus_created != pdPASS) {
-                opus_task_stack_in_psram_ = false;
-                vTaskDelay(pdMS_TO_TICKS(100));
-            }
-        }
-    }
-
-    if (opus_created == pdPASS) {
-        ESP_LOGI(TAG, "opus_codec task created (stack 20KB, %s)",
-                 opus_task_stack_in_psram_ ? "PSRAM" : "internal RAM");
+    if (opus_codec_task_handle_ != nullptr) {
+        ESP_LOGI(TAG, "opus_codec task created (static stack 20KB, internal RAM)");
     } else {
         ESP_LOGE(TAG, "opus_codec task create FAILED: audio playback would be silent!");
     }
@@ -329,7 +308,6 @@ void AudioService::AudioInputTask() {
 }
 
 void AudioService::AudioOutputTask() {
-    ESP_LOGI(TAG, "[dbg] audio_output task started");
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
         audio_queue_cv_.wait(lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_; });
@@ -341,11 +319,6 @@ void AudioService::AudioOutputTask() {
         audio_playback_queue_.pop_front();
         audio_queue_cv_.notify_all();
         lock.unlock();
-
-        static uint32_t out_cnt = 0;
-        if ((++out_cnt % 20) == 0) {
-            ESP_LOGI(TAG, "[dbg] output playing %d samples", (int)(task->pcm.size() / sizeof(int16_t)));
-        }
 
         if (!codec_->output_enabled()) {
             esp_timer_stop(audio_power_timer_);
@@ -372,8 +345,6 @@ void AudioService::AudioOutputTask() {
 }
 
 void AudioService::OpusCodecTask() {
-    ESP_LOGI(TAG, "[dbg] opus_codec task started");
-    uint32_t iter = 0;
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
         audio_queue_cv_.wait(lock, [this]() {
@@ -383,11 +354,6 @@ void AudioService::OpusCodecTask() {
         });
         if (service_stopped_) {
             break;
-        }
-        if ((++iter % 50) == 0) {
-            ESP_LOGI(TAG, "[dbg] codec_task iter=%u decode=%d playback=%d encode=%d send=%d", iter,
-                     (int)audio_decode_queue_.size(), (int)audio_playback_queue_.size(),
-                     (int)audio_encode_queue_.size(), (int)audio_send_queue_.size());
         }
 
         /* Decode the audio from decode queue */
@@ -559,12 +525,6 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
 
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-    static uint32_t push_cnt = 0;
-    if ((++push_cnt % 10) == 0) {
-        ESP_LOGI(TAG, "[dbg] push decode: sr=%d fd=%d bytes=%d decode_q=%d",
-                 packet->sample_rate, packet->frame_duration, (int)packet->payload.size(),
-                 (int)audio_decode_queue_.size());
-    }
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
         if (wait) {
             audio_queue_cv_.wait(lock, [this]() { return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; });

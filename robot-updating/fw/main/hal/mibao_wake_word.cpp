@@ -257,20 +257,6 @@ void StandbyWakeWord::inputTask(void* param)
         } else {
             self->wake_word_->Feed(data);
         }
-
-        // 临时调试：每 50 帧打印一次输入能量与喂入采样数，确认麦克风数据流
-        static uint32_t dbg_cnt = 0;
-        if ((++dbg_cnt % 50) == 0) {
-            int64_t sum = 0;
-            size_t n = data.size() > 320 ? 320 : data.size();
-            for (size_t i = 0; i < n; i++) {
-                int32_t s = data[i];
-                sum += s * s;
-            }
-            float rms = (n > 0) ? sqrtf((float)(sum / (int64_t)n)) : 0.0f;
-            ESP_LOGI(TAG, "[dbg] read %d samples, feed %d samples, rms=%.1f",
-                     (int)data.size(), (int)(self->resampler_ ? resampled.size() : data.size()), rms);
-        }
     }
 
     // 通知 stop() 本任务已完全退出，之后资源可安全释放
