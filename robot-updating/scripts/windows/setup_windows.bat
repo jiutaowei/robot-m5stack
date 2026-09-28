@@ -126,16 +126,27 @@ powercfg /change monitor-timeout-ac 15
 echo   OK
 echo.
 
+REM ---------- ensure data folder exists ----------
+REM data/ is git-ignored (it holds your API keys), so a fresh clone has no data folder.
+if not exist "data" mkdir data
+if not exist "data\bin" mkdir "data\bin"
+
 REM ---------- result ----------
 echo ============================================================
 if not exist "data\.config.yaml" (
     echo   [ACTION REQUIRED] data\.config.yaml is MISSING
     echo.
-    echo   This file holds YOUR API keys and is NOT in git.
-    echo   Copy it from your Mac:
+    echo   This file holds YOUR API keys and is NOT in git,
+    echo   so a fresh git clone never contains it.
+    echo.
+    echo   Take it from your Mac:
     echo     robot-updating/xiaozhi-server/data/.config.yaml
-    echo   to
+    echo   and put it here:
     echo     %CD%\data\.config.yaml
+    echo.
+    echo   Tip: to create it by hand in Notepad, save with the file name
+    echo        ".config.yaml"   ^(include the double quotes^)
+    echo        and encoding UTF-8, otherwise Notepad appends .txt
 ) else (
     echo   data\.config.yaml found - good.
 )
