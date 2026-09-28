@@ -1,0 +1,7 @@
+# 保证跨平台换行符正确：
+#  - Windows 批处理必须是 CRLF，否则个别情况下 cmd 解析异常
+#  - Shell 脚本必须是 LF，否则在 Mac/Linux 上会报 ^M 错误
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.sh   text eol=lf
+*.ps1  text eol=crlf

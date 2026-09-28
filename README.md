@@ -7,6 +7,13 @@
 - **Windows 电脑**（编译固件 + 跑服务器）：见 [WINDOWS_使用指南.md](WINDOWS_使用指南.md)
 - **macOS 电脑**：见下方各节（脚本为 bash，适配 Mac）
 
+## 🚀 展会 / 现场部署（Windows 笔记本 + 手机热点 + 机器人）
+见 [展会部署清单.md](展会部署清单.md)，配套一键脚本：
+```
+robot-updating/scripts/windows/setup_windows.bat   # 装环境+防火墙+关睡眠
+robot-updating/scripts/windows/start_server.bat    # 启动服务器
+```
+
 ## 🔧 遇到问题？
 见 [故障排查手册.md](故障排查手册.md) —— 记录了唤醒无反应、AI 对话没声音、
 连不上服务器、WiFi 配网、编译烧录等实际踩过的坑与定位方法。
