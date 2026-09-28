@@ -126,6 +126,27 @@ powercfg /change monitor-timeout-ac 15
 echo   OK
 echo.
 
+REM ---------- verify clone completeness ----------
+REM 曾经的坑：上游 .gitignore 里一条过宽的 "data/" 规则把 VAD 的 onnx 模型
+REM 也排除了，克隆后服务器起不来。这里做一次关键文件自检。
+echo [check] Verifying required files ...
+set "MISSING=0"
+if not exist "models\snakers4_silero-vad\src\silero_vad\data\silero_vad.onnx" (
+    echo   [ERROR] missing VAD model: models\...\silero_vad.onnx
+    echo           Your clone is incomplete - run: git pull
+    set "MISSING=1"
+)
+if not exist "config.yaml" (
+    echo   [ERROR] missing config.yaml
+    set "MISSING=1"
+)
+if not exist "core\connection.py" (
+    echo   [ERROR] missing server source - wrong folder?
+    set "MISSING=1"
+)
+if "%MISSING%"=="0" echo   OK - all required files present
+echo.
+
 REM ---------- ensure data folder exists ----------
 REM data/ is git-ignored (it holds your API keys), so a fresh clone has no data folder.
 if not exist "data" mkdir data
