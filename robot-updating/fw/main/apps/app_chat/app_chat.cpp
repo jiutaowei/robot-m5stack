@@ -108,11 +108,9 @@ void AppChat::onOpen() {
         view::create_status_bar(kAccentColor, 0x0B2530);
     }
 
-    // 安全门控：仅当 mibao 配置显式开启 ai_chat_enabled 才进入 xiaozhi，
-    // 默认 false → 停在占位页，避免未经接入的对话链路被无条件拉起。
-    // 临时修改：无条件启动 xiaozhi，绕过配置保存问题
-    if (mibao::isAiChatEnabled() || true) {  // 临时：无条件启动
-        mclog::tagInfo(getAppInfo().name, "ai_chat enabled (or forced), request xiaozhi start");
+    // 进入 xiaozhi 语音对话（ai_chat_enabled 默认开启，可在 设置→Mibao→Server URLs 关闭）
+    if (mibao::isAiChatEnabled()) {
+        mclog::tagInfo(getAppInfo().name, "ai_chat enabled, request xiaozhi start");
         GetHAL().requestXiaozhiStart();
     } else {
         mclog::tagInfo(getAppInfo().name, "ai_chat disabled, show placeholder");

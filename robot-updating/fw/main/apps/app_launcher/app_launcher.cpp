@@ -18,6 +18,10 @@
 
 using namespace mooncake;
 
+// 已保存 Wi-Fi 连不上多久后自动进入配网模式（留出正常重连时间：
+// 常规连接 3~8 秒，路由器重启等情况也能自行恢复）
+static constexpr uint32_t kAutoProvDelayMs = 30000;
+
 // 独立任务：开机后从后台服务器拉取设备配置（upload_url/iot_url/ota_url）。
 // 必须放在独立 FreeRTOS 任务里执行，不能在 LVGL 线程里直接做 HTTP，
 // 否则会长时间占用主线程导致卡顿/看门狗复位。
@@ -44,6 +48,8 @@ void AppLauncher::onLauncherCreate()
 void AppLauncher::onLauncherOpen()
 {
     mclog::tagInfo(getAppInfo().name, "on open");
+
+    _launch_ms = GetHAL().millis();
 
     LvglLockGuard lock;
 
@@ -101,6 +107,24 @@ void AppLauncher::onLauncherRunning()
 {
     LvglLockGuard lock;
 
+    // 自动配网：已保存的 Wi-Fi 都连不上时，等待一段时间后自动打开配网热点，
+    // 免去在屏幕上找「设置→Wi-Fi→Hotspot Setup」菜单（换到没有已知 Wi-Fi 的
+    // 新环境时开机即可用手机配网）。可用 mibao/auto_prov 关闭。
+    if (!_startup_worker && !_auto_prov_triggered && mibao::isAutoProvisioningEnabled()) {
+        auto& wifi = WifiManager::GetInstance();
+        if (!SsidManager::GetInstance().GetSsidList().empty() && !wifi.IsConnected() &&
+            !wifi.IsConfigMode() && (GetHAL().millis() - _launch_ms) > kAutoProvDelayMs) {
+            _auto_prov_triggered = true;
+            mclog::tagInfo(getAppInfo().name,
+                           "saved wifi unreachable for {} ms, auto enter hotspot provisioning",
+                           kAutoProvDelayMs);
+            // 释放启动器界面，让配网 worker 独占屏幕（worker 结束后会重建界面）
+            _screensaver.reset();
+            _view.reset();
+            _startup_worker = std::make_unique<setup_workers::HotspotSetupWorker>();
+        }
+    }
+
     if (_startup_worker) {
         _startup_worker->update();
         if (_startup_worker->isDone()) {
@@ -108,7 +132,7 @@ void AppLauncher::onLauncherRunning()
             _startup_checked = true;
             create_launcher_view();
         }
-    } else {
+    } else if (_view) {
         _view->update();
         screensaver_update();
     }

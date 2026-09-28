@@ -347,8 +347,9 @@ bool pullDeviceConfigFromServer()
 
 bool isAiChatEnabled()
 {
+    // 默认开启：AI 对话是设备主功能，不应要求用户先手动打开开关
     Settings settings(kNvsNamespace, false);
-    return settings.GetBool(kAiChatKey, false);
+    return settings.GetBool(kAiChatKey, true);
 }
 
 void setAiChatEnabled(bool enabled)
@@ -359,8 +360,10 @@ void setAiChatEnabled(bool enabled)
 
 bool isAutoProvisioningEnabled()
 {
+    // 默认开启：换到没有已知 Wi-Fi 的环境时，设备会自动开配网热点，
+    // 用户用手机即可完成配网，无需在屏幕上找菜单（"能自动就不手动"）。
     Settings settings(kNvsNamespace, false);
-    return settings.GetBool(kAutoProvKey, false);
+    return settings.GetBool(kAutoProvKey, true);
 }
 
 void setAutoProvisioningEnabled(bool enabled)

@@ -29,6 +29,9 @@ private:
     uint32_t _screensaver_timecount = 0;
     bool _startup_checked           = false;
     bool _config_pulled_            = false;
+    // 自动配网：开机后连不上任何已保存的 Wi-Fi 时，等待一段时间自动打开配网热点
+    uint32_t _launch_ms           = 0;
+    bool _auto_prov_triggered     = false;
 
     void create_launcher_view();
     void screensaver_update();
