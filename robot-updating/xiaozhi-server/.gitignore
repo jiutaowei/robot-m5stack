@@ -153,7 +153,10 @@ cython_debug/
 tmp
 .history
 .DS_Store
-data/
+# 注意：必须是 /data/（只排除服务器自身的 data 目录）。
+# 写成 data/ 会连 models/.../silero_vad/data/ 一起排除，
+# 导致 VAD 的 onnx 模型不入库 → 别人克隆后服务器起不来。
+/data/
 main/xiaozhi-server/.claude
 
 main/manager-web/node_modules
