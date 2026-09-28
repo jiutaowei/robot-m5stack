@@ -230,6 +230,8 @@ void AppMibaoVideo::onClose() {
     stopRecording();
     stopPlayback();
     hideConfirmDialog();
+    // 兜底恢复待机唤醒：防止播放中途退出漏掉 Resume 造成唤醒永久静默。
+    mibao::StandbyWakeWord::Resume();
 
     {
         LvglLockGuard lock;

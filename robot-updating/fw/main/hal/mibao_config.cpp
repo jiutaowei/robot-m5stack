@@ -9,6 +9,13 @@
 #include <cJSON.h>
 #include <mooncake_log.h>
 #include <string_view>
+#include <cstdio>
+#include <cstring>
+#include <cerrno>
+#include <lwip/sockets.h>
+#include <lwip/inet.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace mibao {
 
@@ -28,16 +35,79 @@ constexpr const char* kAiChatKey       = "ai_chat";
 constexpr const char* kAutoProvKey     = "auto_prov";
 constexpr const char* kDefaultIotUrl   = "http://10.51.1.205:5000";
 
-// 把 URL 中的旧 IP 替换为新 IP（服务器地址迁移用）
-std::string replaceIp(const std::string& url, const std::string& old_ip, const std::string& new_ip)
+// ===== UDP 广播自动发现服务器 =====
+// Mac（服务器）IP 由 DHCP 分配可能变化，设备里存的地址一旦失效就连不上，
+// 而设备又无法通过 OTA 自我修复（鸡生蛋）。因此设备启动后向局域网广播探测包，
+// 服务器端（xiaozhi-server/core/api/discovery_responder.py）回复其当前 IP。
+//   设备 -> 服务器: "MIBAO_DISCOVER"
+//   服务器 -> 设备: "MIBAO_SERVER|<ip>|<ws_port>|<http_port>"
+constexpr int kDiscoveryPort           = 8004;
+// WiFi 链路易有较大抖动（实测往返可达数百毫秒），超时给足，避免回复晚到被判失败
+constexpr int kDiscoveryTimeoutMs      = 3000;
+constexpr int kDiscoveryRetry          = 3;
+constexpr const char* kDiscoveryProbe  = "MIBAO_DISCOVER";
+
+// 广播探测一次，成功返回服务器 IP（失败返回空串）
+std::string discoverServerIpOnce(int timeout_ms)
 {
-    std::string result = url;
-    size_t pos = 0;
-    while ((pos = result.find(old_ip, pos)) != std::string::npos) {
-        result.replace(pos, old_ip.size(), new_ip);
-        pos += new_ip.size();
+    const int sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        return "";
     }
-    return result;
+
+    int broadcast = 1;
+    ::setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
+
+    struct timeval tv = {};
+    tv.tv_sec         = timeout_ms / 1000;
+    tv.tv_usec        = (timeout_ms % 1000) * 1000;
+    ::setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in dest = {};
+    dest.sin_family         = AF_INET;
+    dest.sin_port           = htons(kDiscoveryPort);
+    dest.sin_addr.s_addr    = htonl(INADDR_BROADCAST);
+
+    ::sendto(sock, kDiscoveryProbe, std::strlen(kDiscoveryProbe), 0,
+             reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
+
+    char buf[160] = {0};
+    struct sockaddr_in from = {};
+    socklen_t from_len      = sizeof(from);
+    const int n             = ::recvfrom(sock, buf, sizeof(buf) - 1, 0,
+                                         reinterpret_cast<struct sockaddr*>(&from), &from_len);
+    ::close(sock);
+
+    if (n <= 0) {
+        mclog::tagWarn(_tag, "discovery: no reply (n={}, errno={})", n, errno);
+        return "";
+    }
+    buf[n] = '\0';
+
+    char ip[64] = {0};
+    if (sscanf(buf, "MIBAO_SERVER|%63[^|]", ip) != 1 || ip[0] == '\0') {
+        // 容错：只回纯 IP 的实现
+        if (sscanf(buf, "%63s", ip) != 1) {
+            return "";
+        }
+    }
+    // 基本的 IPv4 校验（至少含一个点且不含空格）
+    if (std::strchr(ip, '.') == nullptr) {
+        return "";
+    }
+    return std::string(ip);
+}
+
+// 带重试的广播发现（WiFi 刚连上时首包可能丢）
+std::string discoverServerIp()
+{
+    for (int i = 0; i < kDiscoveryRetry; ++i) {
+        const std::string ip = discoverServerIpOnce(kDiscoveryTimeoutMs);
+        if (!ip.empty()) {
+            return ip;
+        }
+    }
+    return "";
 }
 
 // 提取 URL 的 origin（scheme://host:port，去掉路径部分）。
@@ -56,6 +126,50 @@ std::string extractOrigin(const std::string& url)
         return url;
     }
     return url.substr(0, path_pos);
+}
+
+// 把发现到的服务器地址写入 NVS（仅在变化时写，减少 flash 擦写）。
+// 同时更新 xiaozhi 的 wifi/ota_url，保证 AI 对话的 OTA 走新地址。
+bool applyDiscoveredAddress(const std::string& ip)
+{
+    if (ip.empty()) {
+        return false;
+    }
+    const std::string origin  = "http://" + ip + ":8003";
+    const std::string ota_url = origin + "/xiaozhi/ota/";
+    const std::string up_url  = origin + "/mibao/meeting/transcribe";
+
+    Settings mibao_r(kNvsNamespace, false);
+    const std::string cur_ota = mibao_r.GetString(kOtaUrlKey, "");
+    const std::string cur_up  = mibao_r.GetString(kUploadUrlKey, "");
+    if (extractOrigin(cur_ota) == origin && extractOrigin(cur_up) == origin) {
+        return true;  // 地址未变化，无需写 NVS
+    }
+
+    Settings mibao_w(kNvsNamespace, true);
+    mibao_w.SetString(kOtaUrlKey, ota_url);
+    mibao_w.SetString(kUploadUrlKey, up_url);
+
+    Settings wifi_w("wifi", true);
+    wifi_w.SetString(kOtaUrlKey, ota_url);
+
+    mclog::tagInfo(_tag, "server address updated by discovery: {}", origin);
+    return true;
+}
+
+// 后台周期发现任务：设备长时间运行期间 Mac IP 变化也能自动跟随
+void discoveryWatchTask(void* arg)
+{
+    (void)arg;
+    // 首次稍等，让 WiFi 完成连接（失败会在后续周期重试）
+    vTaskDelay(pdMS_TO_TICKS(15000));
+    while (true) {
+        const std::string ip = discoverServerIpOnce(3000);
+        if (!ip.empty()) {
+            applyDiscoveredAddress(ip);
+        }
+        vTaskDelay(pdMS_TO_TICKS(30000));
+    }
 }
 
 }  // namespace
@@ -105,20 +219,13 @@ std::string getOtaUrl()
     // 优先读 wifi/ota_url：Web 配网（192.168.4.1 Advanced tab）写入的位置，
     // 与 xiaozhi OTA 读取（ota.cc::GetCheckVersionUrl）一致。
     // 修复"Web 配网保存 OTA URL 后设备屏幕看不到"的双 namespace 不同步问题。
+    //
+    // 注意：服务器 IP 变化由 UDP 广播发现处理（见 discoverServerIp /
+    // pullDeviceConfigFromServer），发现成功后会覆盖此处的地址，
+    // 因此这里不再做写死 IP 的迁移。
     Settings wifi_settings("wifi", false);
     std::string url = wifi_settings.GetString(kOtaUrlKey, "");
     if (!url.empty()) {
-        // 旧服务器地址自动迁移：192.168.1.144 已废弃（Mac 换 IP），
-        // 若配置还是旧地址则改为当前服务器 192.168.1.224。
-        if (url.find("192.168.1.144") != std::string::npos) {
-            const std::string migrated = replaceIp(url, "192.168.1.144", "192.168.1.224");
-            Settings wifi_w("wifi", true);
-            wifi_w.SetString(kOtaUrlKey, migrated);
-            Settings mibao_w(kNvsNamespace, true);
-            mibao_w.SetString(kOtaUrlKey, migrated);
-            mclog::tagInfo(_tag, "migrated ota_url: {} -> {}", url, migrated);
-            return migrated;
-        }
         return url;
     }
     // 回退到 mibao/ota_url：设备屏幕 MibaoUrlWorker 写入的位置，向后兼容旧数据。
@@ -149,22 +256,32 @@ void syncOtaUrlToXiaozhi()
 
 bool pullDeviceConfigFromServer()
 {
-    // 优先使用 upload_url 作为服务器基础地址。
-    // 如果 upload_url 未配置，则尝试从 ota_url 中提取 origin。
-    std::string base_url = getUploadUrl();
-    if (base_url.empty()) {
-        base_url = getOtaUrl();
-    }
+    std::string origin;
 
-    if (base_url.empty()) {
-        mclog::tagInfo(_tag, "upload_url and ota_url are both empty, skip pulling config");
-        return false;
-    }
-
-    const std::string origin = extractOrigin(base_url);
-    if (origin.empty()) {
-        mclog::tagError(_tag, "invalid base_url, cannot extract origin: {}", base_url);
-        return false;
+    // ① 优先 UDP 广播发现服务器：Mac IP 变化后仍能找到（最可靠）
+    const std::string discovered_ip = discoverServerIp();
+    if (!discovered_ip.empty()) {
+        origin = "http://" + discovered_ip + ":8003";
+        // 同步写入 NVS：后续 xiaozhi OTA（读 wifi/ota_url）、录音转纪要上传
+        // （读 mibao/upload_url）都会自动使用新地址。
+        applyDiscoveredAddress(discovered_ip);
+        mclog::tagInfo(_tag, "discovered server at {} (UDP broadcast)", discovered_ip);
+    } else {
+        // ② 回退：按原有逻辑从配置的 upload_url / ota_url 推导
+        mclog::tagWarn(_tag, "UDP discovery failed, fallback to configured server address");
+        std::string base_url = getUploadUrl();
+        if (base_url.empty()) {
+            base_url = getOtaUrl();
+        }
+        if (base_url.empty()) {
+            mclog::tagInfo(_tag, "upload_url and ota_url are both empty, skip pulling config");
+            return false;
+        }
+        origin = extractOrigin(base_url);
+        if (origin.empty()) {
+            mclog::tagError(_tag, "invalid base_url, cannot extract origin: {}", base_url);
+            return false;
+        }
     }
 
     const std::string config_url = origin + "/api/device/config";
@@ -250,6 +367,31 @@ void setAutoProvisioningEnabled(bool enabled)
 {
     Settings settings(kNvsNamespace, true);
     settings.SetBool(kAutoProvKey, enabled);
+}
+
+
+bool refreshServerAddressFromDiscovery(int timeout_ms)
+{
+    const std::string ip = discoverServerIpOnce(timeout_ms > 0 ? timeout_ms : 1500);
+    if (ip.empty()) {
+        return false;
+    }
+    return applyDiscoveredAddress(ip);
+}
+
+void startServerDiscoveryWatch()
+{
+    static bool started = false;
+    if (started) {
+        return;
+    }
+    started = true;
+    if (xTaskCreate(discoveryWatchTask, "mibao_disc", 4096, nullptr, 5, nullptr) != pdPASS) {
+        started = false;
+        mclog::tagWarn(_tag, "failed to create server discovery watch task");
+    } else {
+        mclog::tagInfo(_tag, "server discovery watch task started (every 30s)");
+    }
 }
 
 }  // namespace mibao

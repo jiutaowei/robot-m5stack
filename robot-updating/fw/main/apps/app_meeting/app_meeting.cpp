@@ -374,6 +374,9 @@ void AppMeeting::onClose() {
     mclog::tagInfo(getAppInfo().name, "on close");
     stopMeetingTasks();
     hideConfirmDialog();
+    // 兜底恢复待机唤醒：若之前在播放音频时 Suspend，中途退出会漏掉 Resume，
+    // 导致回到待机后唤醒永久静默。Resume 幂等，重复调用无副作用。
+    mibao::StandbyWakeWord::Resume();
 
     LvglLockGuard lock;
     view::clear_edge_back_callback();

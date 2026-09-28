@@ -45,3 +45,6 @@ archive/
 # ===== 系统文件 =====
 .DS_Store
 Thumbs.db
+
+# ===== 本地配网凭据（含 WiFi 密码，禁止入库）=====
+robot-updating/fw/main/mibao_prov_local.h

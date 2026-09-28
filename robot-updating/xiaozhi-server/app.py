@@ -6,6 +6,7 @@ from aioconsole import ainput
 from config.settings import load_config
 from config.logger import setup_logging
 from core.utils.util import get_local_ip, validate_mcp_endpoint
+from core.api.discovery_responder import start_discovery_responder
 from core.http_server import SimpleHttpServer
 from core.websocket_server import WebSocketServer
 from core.utils.util import check_ffmpeg_installed
@@ -75,17 +76,22 @@ async def main():
     ota_server = SimpleHttpServer(config)
     ota_task = asyncio.create_task(ota_server.start())
 
+    # 启动 UDP 自动发现服务（设备广播探测 → 回复服务器当前 IP，
+    # 解决 Mac IP 由 DHCP 变化后设备连不上的问题）
+    discovery_transport = await start_discovery_responder(logger, config)
+
     read_config_from_api = config.get("read_config_from_api", False)
     port = int(config["server"].get("http_port", 8003))
+    host = get_local_ip()
     if not read_config_from_api:
         logger.bind(tag=TAG).info(
             "OTA接口是\t\thttp://{}:{}/xiaozhi/ota/",
-            get_local_ip(),
+            host,
             port,
         )
     logger.bind(tag=TAG).info(
         "视觉分析接口是\thttp://{}:{}/mcp/vision/explain",
-        get_local_ip(),
+        host,
         port,
     )
     mcp_endpoint = config.get("mcp_endpoint", None)
@@ -108,7 +114,7 @@ async def main():
 
     logger.bind(tag=TAG).info(
         "Websocket地址是\tws://{}:{}/xiaozhi/v1/",
-        get_local_ip(),
+        host,
         websocket_port,
     )
 

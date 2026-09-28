@@ -108,3 +108,7 @@ CONFIG_DISABLE_FIRMWARE_OTA=y
 # only offers NONE / USB_SERIAL_JTAG (no UART option; UART0 as secondary is
 # implicit when UART is primary), so secondary stays NONE here.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# ===== mDNS 客户端支持（让设备解析 .local 主机名，自动跟踪 Mac IP 变化）=====
+# ESP-IDF 5.5 的 LWIP mDNS 客户端查询依赖 IGMP 多播；不打开则 mDNS 解析 .local 失败
+CONFIG_LWIP_IGMP=y

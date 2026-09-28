@@ -1,4 +1,6 @@
 #include "audio_service.h"
+#include <esp_heap_caps.h>
+#include <freertos/idf_additions.h>
 #include <esp_log.h>
 #include <chrono>
 #include <cstring>
@@ -163,11 +165,46 @@ void AudioService::Start() {
     // 栈历史：24KB(2048*12) 在内存紧张时 xTaskCreate 失败 -> decode 无人消费，
     // "光张嘴没声音"；16KB(2048*8) 创建成功但 esp_opus 解码栈峰值超限 ->
     // "A stack overflow in task opus_codec" 崩溃重启。20KB 是两者之间的平衡点。
-    xTaskCreate([](void* arg) {
+    //
+    // 关键修复：xTaskCreate 可能失败（返回 pdFAIL）而旧代码不检查返回值，
+    // 结果是解码任务根本没起来 —— 服务器发来的语音全堆在 decode 队列无人消费，
+    // 表现为"能看到在说话但完全没声音"。
+    // 内部 RAM 由于碎片化/IRAM 不可字节寻址，即使总量看起来充足也可能分配不到
+    // 连续 20KB，所以失败时回退到 PSRAM 分配任务栈（设备有 8MB PSRAM）。
+    BaseType_t opus_created = xTaskCreate([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
-        vTaskDelete(NULL);
+        if (audio_service->opus_task_stack_in_psram_) {
+            vTaskDeleteWithCaps(NULL);
+        } else {
+            vTaskDelete(NULL);
+        }
     }, "opus_codec", 2048 * 10, this, 2, &opus_codec_task_handle_);
+
+    if (opus_created != pdPASS) {
+        ESP_LOGW(TAG, "opus_codec: internal RAM failed (free8bit=%u largest=%u), falling back to PSRAM",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL));
+        for (int attempt = 0; attempt < 10 && opus_created != pdPASS; ++attempt) {
+            opus_task_stack_in_psram_ = true;
+            opus_created = xTaskCreateWithCaps([](void* arg) {
+                AudioService* audio_service = (AudioService*)arg;
+                audio_service->OpusCodecTask();
+                vTaskDeleteWithCaps(NULL);
+            }, "opus_codec", 2048 * 10, this, 2, &opus_codec_task_handle_, MALLOC_CAP_SPIRAM);
+            if (opus_created != pdPASS) {
+                opus_task_stack_in_psram_ = false;
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        }
+    }
+
+    if (opus_created == pdPASS) {
+        ESP_LOGI(TAG, "opus_codec task created (stack 20KB, %s)",
+                 opus_task_stack_in_psram_ ? "PSRAM" : "internal RAM");
+    } else {
+        ESP_LOGE(TAG, "opus_codec task create FAILED: audio playback would be silent!");
+    }
 }
 
 void AudioService::Stop() {

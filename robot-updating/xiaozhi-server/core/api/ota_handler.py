@@ -179,7 +179,14 @@ class OTAHandler(BaseHandler):
             # - http_port is used to construct OTA download URLs (server["http_port"])
             websocket_port = int(server_config.get("port", 8000))
             http_port = int(server_config.get("http_port", 8003))
-            local_ip = get_local_ip()
+            # 下发真实 IP（设备通过 UDP 广播发现服务器，见 discovery_responder.py）
+            # 优先用设备实际访问的 Host，多网卡时最准确
+            req_host = ""
+            try:
+                req_host = (request.host or "").split(":")[0]
+            except Exception:
+                req_host = ""
+            host = req_host if req_host and not req_host.startswith("127.") else get_local_ip()
 
             # Determine device model (prefer headers)
             device_model = ""
@@ -288,9 +295,9 @@ class OTAHandler(BaseHandler):
                             token = self.auth.generate_token(client_id, device_id)
                     else:
                         token = self.auth.generate_token(client_id, device_id)
-                # NOTE: use websocket_port here
+                # NOTE: use websocket_port here; 设备用 mDNS 解析主机名（不受 Mac IP 变化影响）
                 return_json["websocket"] = {
-                    "url": self._get_websocket_url(local_ip, websocket_port),
+                    "url": self._get_websocket_url(host, websocket_port),
                     "token": token,
                 }
                 self.logger.bind(tag=TAG).info(
@@ -356,10 +363,15 @@ class OTAHandler(BaseHandler):
         """处理 OTA GET 请求"""
         try:
             server_config = self.config["server"]
-            local_ip = get_local_ip()
-            # use websocket port for websocket URL
+            # 下发真实 IP（设备通过 UDP 广播发现服务器）
+            req_host = ""
+            try:
+                req_host = (request.host or "").split(":")[0]
+            except Exception:
+                req_host = ""
+            host = req_host if req_host and not req_host.startswith("127.") else get_local_ip()
             websocket_port = int(server_config.get("port", 8000))
-            websocket_url = self._get_websocket_url(local_ip, websocket_port)
+            websocket_url = self._get_websocket_url(host, websocket_port)
             message = f"OTA接口运行正常，向设备发送的websocket地址是：{websocket_url}"
             response = web.Response(text=message, content_type="text/plain")
         except Exception as e:

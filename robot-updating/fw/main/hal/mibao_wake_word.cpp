@@ -49,6 +49,11 @@ bool StandbyWakeWord::start(WakeCallback on_wake)
     }
     on_wake_ = std::move(on_wake);
 
+    // 每次启动都清除上一次会话遗留的暂停标志。
+    // 之前播放音频时 Suspend，若中途退出应用没走到 Resume，
+    // 全局标志会一直为 true，导致唤醒永久静默（喊什么都没反应）。
+    g_suspended = false;
+
     // 获取音频 codec（单例，与 xiaozhi 共享同一硬件）
     codec_ = Board::GetInstance().GetAudioCodec();
     if (codec_ == nullptr) {

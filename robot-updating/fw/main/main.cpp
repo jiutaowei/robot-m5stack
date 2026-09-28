@@ -10,10 +10,48 @@
 #include <apps/apps.h>
 #include <hal/hal.h>
 #include <hal/mibao_wake_word.h>
+#include <hal/mibao_config.h>
+#include <ssid_manager.h>
 #include <esp_system.h>
 
 using namespace mooncake;
 using namespace smooth_ui_toolkit;
+
+// Local Wi-Fi provisioning override.
+//
+// Put credentials in a LOCAL, git-ignored header (never committed):
+//     fw/main/mibao_prov_local.h
+//     #define MIBAO_PROV_SSID     "your-ssid"
+//     #define MIBAO_PROV_PASSWORD "your-password"
+// On boot the entry is upserted into the saved SSID list, so the device
+// connects without touching its screen or using a phone.
+#if __has_include("mibao_prov_local.h")
+#include "mibao_prov_local.h"
+#endif
+
+static void applyLocalProvisioning()
+{
+#if defined(MIBAO_PROV_SSID) && defined(MIBAO_PROV_PASSWORD)
+    auto& mgr = SsidManager::GetInstance();
+    const std::string want_ssid = MIBAO_PROV_SSID;
+
+    int existing = -1;
+    {
+        const auto& list = mgr.GetSsidList();
+        for (size_t i = 0; i < list.size(); ++i) {
+            if (list[i].ssid == want_ssid) {
+                existing = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (existing >= 0) {
+        mgr.RemoveSsid(existing);  // 覆盖旧密码
+    }
+    mgr.AddSsid(want_ssid, MIBAO_PROV_PASSWORD);
+    mclog::tagInfo("Boot", "local wifi provisioning applied: {}", want_ssid);
+#endif
+}
 
 extern "C" void app_main(void)
 {
@@ -26,6 +64,9 @@ extern "C" void app_main(void)
 
     // HAL init
     GetHAL().init();
+
+    // 本地配网注入（若存在 mibao_prov_local.h），必须在联网前执行
+    applyLocalProvisioning();
 
     // Setup ui hal
     ui_hal::on_delay([](uint32_t ms) { GetHAL().delay(ms); });
@@ -59,6 +100,10 @@ extern "C" void app_main(void)
             GetHAL().requestXiaozhiStart();
         });
 
+        // 后台周期发现服务器地址（UDP 广播）：Mac IP 由 DHCP 变化时自动跟随，
+        // 无需重新配网或重启设备。
+        mibao::startServerDiscoveryWatch();
+
         // Main loop
         while (1) {
             GetHAL().feedTheDog();
@@ -79,6 +124,11 @@ extern "C" void app_main(void)
         GetMooncake().uninstallAllApps();
         DestroyMooncake();
     }
+
+    // 进入 AI 对话前最后快速刷新一次服务器地址（单次、短超时，失败不阻塞）：
+    // 覆盖"开机后 WiFi 才连上、launcher 配置拉取已错过"的情况，
+    // 保证 xiaozhi 的 OTA 用的是当前有效的服务器地址。
+    mibao::refreshServerAddressFromDiscovery(600);
 
     // Start xiaozhi, never returns
     GetHAL().startXiaozhi();

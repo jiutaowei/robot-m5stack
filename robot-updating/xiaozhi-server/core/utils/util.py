@@ -17,16 +17,73 @@ from typing import Callable, Any
 TAG = __name__
 
 
-def get_local_ip():
+def get_server_host():
+    """返回本机的 mDNS 主机名（形如 weijiutaodeMac-mini.local）。
+
+    给设备下发的地址用主机名，设备用 mDNS 解析到当前 IP，
+    Mac 的 IP 即使变来变去，Bonjour 主机名不变，设备永远能找到服务器。
+    """
+    # 优先 scutil 读本机 LocalHostName（自动跟随 Mac 实际主机名）
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # Connect to Google's DNS servers
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-        return local_ip
-    except Exception as e:
-        return "127.0.0.1"
+        import subprocess
+        out = subprocess.check_output(["scutil", "--get", "LocalHostName"], timeout=1).decode().strip()
+        if out:
+            return f"{out}.local"
+    except Exception:
+        pass
+    # 兜底：硬编码（与固件端 kMibaoServerHost 保持一致）
+    return "weijiutaodeMac-mini.local"
+
+
+def get_local_ip():
+    """获取本机局域网 IP（调试/打印用）。
+
+    注意：OTA / WebSocket 下发给设备的地址应使用 get_server_host()（mDNS 主机名），
+    这样 Mac IP 变化不影响设备连接。这里仍返回 IP 供日志显示。
+    原实现通过连接 Google DNS 8.8.8.8 探测，但国内网络访问不通 Google，
+    异常后被回退成 127.0.0.1。改为：① 国内可达地址探测 ② 网卡枚举兜底 ③ 最后才回环。
+    """
+    # ① 连接国内可达地址探测出口 IP（阿里 DNS，UDP 不实际发包）
+    for probe in ("223.5.5.5", "114.114.114.114", "8.8.8.8"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.5)
+            s.connect((probe, 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            if local_ip and not local_ip.startswith("127."):
+                return local_ip
+        except Exception:
+            pass
+
+    # ② 网卡枚举兜底（psutil 已在依赖中）：优先物理网卡，排除虚拟/回环
+    try:
+        import psutil
+
+        candidates = []
+        for name, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family != socket.AF_INET:
+                    continue
+                ip = addr.address
+                if not ip or ip.startswith("127."):
+                    continue
+                # 排除常见虚拟网卡（VMware/Parallels/Docker/utun 等）
+                low = name.lower()
+                if any(k in low for k in ("vmnet", "vnic", "docker", "utun", "bridge",
+                                          "llw", "awdl", "ap1", "tun", "tap")):
+                    continue
+                # 优先物理网卡 en0/en1
+                priority = 0 if low in ("en0", "en1") else 1
+                candidates.append((priority, ip))
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            return candidates[0][1]
+    except Exception:
+        pass
+
+    # ③ 兜底
+    return "127.0.0.1"
 
 
 def is_private_ip(ip_addr):

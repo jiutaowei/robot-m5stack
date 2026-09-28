@@ -44,4 +44,18 @@ void setAutoProvisioningEnabled(bool enabled);
 // upload_url/iot_url/ota_url 并写入 NVS。返回是否成功（HTTP 200 且解析成功）。
 bool pullDeviceConfigFromServer();
 
+// ===== 服务器地址自动发现（UDP 广播）=====
+// Mac（服务器）IP 由 DHCP 分配可能变化。设备通过向局域网广播探测包，
+// 由服务器（xiaozhi-server/core/api/discovery_responder.py）回复当前 IP，
+// 从而自动跟随 IP 变化，无需重新配网或重新烧录。
+//
+// 发现成功且地址与 NVS 中记录不同时，更新 mibao/ota_url、mibao/upload_url
+// 与 wifi/ota_url（xiaozhi OTA 走这个键）。返回是否发现了服务器。
+// timeout_ms：单次广播等待时长，进入对话前等敏感场景可传较小值。
+bool refreshServerAddressFromDiscovery(int timeout_ms = 1500);
+
+// 启动后台周期发现任务（30 秒一次）：设备长时间运行期间 Mac IP 变化时
+// 自动更新服务器地址。幂等，可重复调用。
+void startServerDiscoveryWatch();
+
 }  // namespace mibao

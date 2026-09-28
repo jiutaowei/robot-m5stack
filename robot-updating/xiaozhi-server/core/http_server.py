@@ -48,7 +48,13 @@ class SimpleHttpServer:
 
             server_config = self.config["server"]
             http_port = int(server_config.get("http_port", 8003))
-            ip = get_local_ip()
+            # 优先用设备实际访问的 Host（多网卡时最准确），否则回退本机探测
+            req_host = ""
+            try:
+                req_host = (request.host or "").split(":")[0]
+            except Exception:
+                req_host = ""
+            ip = req_host if req_host and not req_host.startswith("127.") else get_local_ip()
             upload_url = f"http://{ip}:{http_port}/mibao/meeting/transcribe"
             ota_url = f"http://{ip}:{http_port}/xiaozhi/ota/"
             config = {"upload_url": upload_url, "ota_url": ota_url}

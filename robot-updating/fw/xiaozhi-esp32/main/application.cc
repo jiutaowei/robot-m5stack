@@ -65,8 +65,9 @@ void Application::Initialize() {
     // Setup the display
     auto display = board.GetDisplay();
     display->SetupUI();
-    // Print board name/version info
-    display->SetChatMessage("system", SystemInfo::GetUserAgent().c_str());
+    // 启动时显示友好名称（原来显示型号/版本 "m5stack-stack-chan/1.4.3"，
+    // 使用者看不懂；型号版本仍通过 HTTP User-Agent 正常上报，不影响功能）
+    display->SetChatMessage("system", "米宝一号");
 
     // Setup the audio service
     auto codec = board.GetAudioCodec();
