@@ -44,14 +44,14 @@ void AppSetup::onOpen()
     _menu_sections = {
         {
             "Wi-Fi",
-            {{"Change Wi-Fi",
+            {{"切换 Wi-Fi",
               [&]() {
                   _destroy_menu    = true;
                   _need_warm_reset = true;
                   _worker          = std::make_unique<WifiSetupWorker>();
               }},
              // 主动进入框架内置 SoftAP 热点配网（手机浏览器配网）
-             {"Hotspot Setup",
+             {"手机配网（配网热点）",
               [&]() {
                   _destroy_menu    = true;
                   // _need_warm_reset 留 false：worker 析构已同步停 AP，

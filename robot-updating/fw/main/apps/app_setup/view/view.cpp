@@ -67,11 +67,46 @@ void SelectMenuPage::update()
     }
 }
 
+// 中文字体声明：菜单标签需要显示中文（如"手机配网"），
+// Montserrat 不含汉字，用 LVGL 的 fallback 机制按需回退。
+LV_FONT_DECLARE(mibao_zh_font);
+LV_FONT_DECLARE(mibao_zh_font_16);
+
+namespace {
+
+// 把 Montserrat 复制一份并挂上中文回退：英文仍用原字形，汉字走米宝中文字体。
+// 这样无需改动现有英文菜单的观感，只是"缺字时能显示中文"。
+const lv_font_t* menu_font_16()
+{
+    static lv_font_t font_rt;
+    static bool hooked = false;
+    if (!hooked) {
+        font_rt       = lv_font_montserrat_16;  // 结构体拷贝
+        font_rt.fallback = &mibao_zh_font_16;
+        hooked        = true;
+    }
+    return &font_rt;
+}
+
+const lv_font_t* menu_font_24()
+{
+    static lv_font_t font_rt;
+    static bool hooked = false;
+    if (!hooked) {
+        font_rt       = lv_font_montserrat_24;
+        font_rt.fallback = &mibao_zh_font;  // 26px 中文字体，视觉接近 24px
+        hooked        = true;
+    }
+    return &font_rt;
+}
+
+}  // namespace
+
 void SelectMenuPage::create_selection_label(int x, int y, std::string_view text)
 {
     auto label = std::make_unique<uitk::lvgl_cpp::Label>(*_pannel);
     label->setText(text);
-    label->setTextFont(&lv_font_montserrat_16);
+    label->setTextFont(menu_font_16());
     label->setTextColor(lv_color_hex(0x6A6882));
     label->setPos(x, y);
     _labels.push_back(std::move(label));
@@ -88,7 +123,7 @@ void SelectMenuPage::create_item_button(int y, const MenuItem& item, int section
     btn->setRadius(18);
 
     btn->label().setText(item.label);
-    btn->label().setTextFont(&lv_font_montserrat_24);
+    btn->label().setTextFont(menu_font_24());
     btn->label().setTextColor(lv_color_hex(0x26206A));
     btn->label().align(LV_ALIGN_CENTER, 0, 0);
     btn->label().setWidth(256);

@@ -360,10 +360,9 @@ void setAiChatEnabled(bool enabled)
 
 bool isAutoProvisioningEnabled()
 {
-    // 默认开启：换到没有已知 Wi-Fi 的环境时，设备会自动开配网热点，
-    // 用户用手机即可完成配网，无需在屏幕上找菜单（"能自动就不手动"）。
+    // 自动弹出配网已按需求移除：配网统一从 设置→Wi-Fi→手机配网 手动进入。
     Settings settings(kNvsNamespace, false);
-    return settings.GetBool(kAutoProvKey, true);
+    return settings.GetBool(kAutoProvKey, false);
 }
 
 void setAutoProvisioningEnabled(bool enabled)

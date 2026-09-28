@@ -18,9 +18,6 @@
 
 using namespace mooncake;
 
-// 已保存 Wi-Fi 连不上多久后自动进入配网模式（留出正常重连时间：
-// 常规连接 3~8 秒，路由器重启等情况也能自行恢复）
-static constexpr uint32_t kAutoProvDelayMs = 30000;
 
 // 独立任务：开机后从后台服务器拉取设备配置（upload_url/iot_url/ota_url）。
 // 必须放在独立 FreeRTOS 任务里执行，不能在 LVGL 线程里直接做 HTTP，
@@ -49,8 +46,6 @@ void AppLauncher::onLauncherOpen()
 {
     mclog::tagInfo(getAppInfo().name, "on open");
 
-    _launch_ms = GetHAL().millis();
-
     LvglLockGuard lock;
 
     if (!_startup_checked && SsidManager::GetInstance().GetSsidList().empty()) {
@@ -69,26 +64,7 @@ void AppLauncher::onLauncherOpen()
         // 拉起 station，设备重启后 WiFi 不会自动连接，导致用户以为"配网丢失"
         // 而被迫重新配网。WifiManager::Initialize 幂等，StartStation 内部有
         // station_active_ 幂等保护，可安全重复调用。
-        if (!WifiManager::GetInstance().IsConnected() && !WifiManager::GetInstance().IsConfigMode()) {
-            if (xTaskCreate([](void*) {
-                                auto& w = WifiManager::GetInstance();
-                                if (!w.IsInitialized()) {
-                                    WifiManagerConfig cfg;
-                                    cfg.ssid_prefix = "Mibao";
-                                    if (!w.Initialize(cfg)) {
-                                        mclog::tagError("AppLauncher", "wifi manager init failed");
-                                    }
-                                }
-                                if (!SsidManager::GetInstance().GetSsidList().empty()) {
-                                    mclog::tagInfo("AppLauncher", "auto-connect saved wifi");
-                                    w.StartStation();
-                                }
-                                vTaskDelete(nullptr);
-                            },
-                            "wifi_auto_connect", 16384, nullptr, 5, nullptr) != pdPASS) {
-                mclog::tagError(getAppInfo().name, "failed to create wifi auto-connect task");
-            }
-        }
+        start_wifi_auto_connect();
 
         // 开机后若已有保存的 Wi-Fi 且已配置后台 upload_url 或 ota_url，则在独立高栈任务中
         // 拉取服务器端配置（upload_url/iot_url/ota_url）。无论成败只尝试一次，
@@ -107,30 +83,17 @@ void AppLauncher::onLauncherRunning()
 {
     LvglLockGuard lock;
 
-    // 自动配网：已保存的 Wi-Fi 都连不上时，等待一段时间后自动打开配网热点，
-    // 免去在屏幕上找「设置→Wi-Fi→Hotspot Setup」菜单（换到没有已知 Wi-Fi 的
-    // 新环境时开机即可用手机配网）。可用 mibao/auto_prov 关闭。
-    if (!_startup_worker && !_auto_prov_triggered && mibao::isAutoProvisioningEnabled()) {
-        auto& wifi = WifiManager::GetInstance();
-        if (!SsidManager::GetInstance().GetSsidList().empty() && !wifi.IsConnected() &&
-            !wifi.IsConfigMode() && (GetHAL().millis() - _launch_ms) > kAutoProvDelayMs) {
-            _auto_prov_triggered = true;
-            mclog::tagInfo(getAppInfo().name,
-                           "saved wifi unreachable for {} ms, auto enter hotspot provisioning",
-                           kAutoProvDelayMs);
-            // 释放启动器界面，让配网 worker 独占屏幕（worker 结束后会重建界面）
-            _screensaver.reset();
-            _view.reset();
-            _startup_worker = std::make_unique<setup_workers::HotspotSetupWorker>();
-        }
-    }
-
     if (_startup_worker) {
         _startup_worker->update();
         if (_startup_worker->isDone()) {
             _startup_worker.reset();
             _startup_checked = true;
             create_launcher_view();
+            // 配网界面结束后恢复 Wi-Fi：进入 SoftAP 配网会停掉 station，而
+            // StopConfigAp 不会自动恢复。若用户只是进配网页看一眼再退出，
+            // 不补这一步设备会一直离线（表现为 AI 对话连不上），
+            // 只有重启才恢复。这里统一兜底重连已保存的网络。
+            start_wifi_auto_connect();
         }
     } else if (_view) {
         _view->update();
@@ -172,6 +135,32 @@ AppLauncher::~AppLauncher()
     LvglLockGuard lock;
     _screensaver.reset();
     _view.reset();
+}
+
+void AppLauncher::start_wifi_auto_connect()
+{
+    auto& wifi = WifiManager::GetInstance();
+    if (wifi.IsConnected() || wifi.IsConfigMode()) {
+        return;
+    }
+    if (xTaskCreate([](void*) {
+                        auto& w = WifiManager::GetInstance();
+                        if (!w.IsInitialized()) {
+                            WifiManagerConfig cfg;
+                            cfg.ssid_prefix = "Mibao";
+                            if (!w.Initialize(cfg)) {
+                                mclog::tagError("AppLauncher", "wifi manager init failed");
+                            }
+                        }
+                        if (!SsidManager::GetInstance().GetSsidList().empty()) {
+                            mclog::tagInfo("AppLauncher", "auto-connect saved wifi");
+                            w.StartStation();
+                        }
+                        vTaskDelete(nullptr);
+                    },
+                    "wifi_auto_connect", 16384, nullptr, 5, nullptr) != pdPASS) {
+        mclog::tagError(getAppInfo().name, "failed to create wifi auto-connect task");
+    }
 }
 
 void AppLauncher::create_launcher_view()

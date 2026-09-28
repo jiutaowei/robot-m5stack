@@ -14,9 +14,8 @@
  *                   （默认 http://10.51.1.205:5000，实际请求拼 /actuator_control）
  * - ota_url       : OTA 升级服务器地址（默认空，空 = 未配置）
  * - ai_chat_enabled : 是否允许对话入口进入 xiaozhi（默认 false，纯占位页）
- * - auto_prov       : 是否允许开机连不上已保存 Wi-Fi 时自动进入热点配网
- *                   （默认 true：等 30 秒仍连不上就自动开 Mibao-XXXX 配网热点；
- *                     也可从 设置→Wi-Fi→Hotspot Setup 手动进入）
+ * - auto_prov       : 是否允许开机 Wi-Fi 连接失败/未配网时自动进入热点配网
+ *                   （默认 false：配网统一从 设置→Wi-Fi→手机配网 手动进入）
  */
 namespace mibao {
 
