@@ -18,7 +18,8 @@
 # ===== 构建产物 / 编译缓存 =====
 robot-updating/fw/build/
 robot-updating/fw/managed_components/
-robot-updating/fw/dependencies.lock
+# 注意：dependencies.lock 需要入库 —— 它锁定 managed_components 的版本与哈希，
+# 保证换机器编译固件时拉到完全相同的组件（否则可能得到不同固件）。
 robot-updating/fw/sdkconfig
 robot-updating/fw/sdkconfig.old
 **/__pycache__/
@@ -49,7 +50,6 @@ serial_log*.txt
 UI参考图/
 05_智能手表参考/
 archive/
-米宝开会.png
 
 # ===== 系统文件 =====
 .DS_Store
