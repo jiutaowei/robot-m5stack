@@ -117,6 +117,16 @@ CLAIM_ENV_NAMES = {
     "creation_name": ("HEZOR2_META_CREATION_NAME", "HEZOR_META_CREATION_NAME"),
 }
 
+# 数据类问题内部工具调用多，实测可超 60s，故 120s 起步
+DEFAULT_SPEAK_HINT = (
+    "【播报要求·重要】用户是语音对话，看不到屏幕。"
+    "如果是数据结果：只用 1~2 句话、总共不超过约 60 字，直接说出最关键的数字和结论"
+    "（例如最新一期的发生面积、发生程度、升降趋势），不要念表格、不要逐条罗列、"
+    "不要出现 Markdown 符号（| # * ）,也不要说“根据查询结果”这类套话。"
+    "如果是需要向用户澄清的问题：照原意用一句话问回去即可。"
+    "完整明细已在后台保留，用户追问时再展开。"
+)
+
 # 插件默认配置：私钥可给「PEM 内容」（文档推荐的 cert_content 环境变量）
 # 或「文件路径」（本项目 .env 的 HEZOR2_HEADER_PK_FILEPATH 风格）
 DEFAULT_PLUGIN_CONFIG: Dict[str, Any] = {
@@ -139,6 +149,25 @@ DEFAULT_PLUGIN_CONFIG: Dict[str, Any] = {
     # 完全相同的公共前缀。只有满足「长度 >= 该阈值 且 开头重复」才按快照替换，
     # 否则纯增量拼接会出现 2~3 份重复/半截交错内容。设为 0 可关闭该判定。
     "snapshot_min_chars": 16,
+    # 发送前剥掉「防治建议/用药方案」类措辞：实测这类词会触发上游大模型
+    # content_filter，让数字员工整轮失败；数据照查，防治建议由机器人自己回答。
+    "strip_control_requests": True,
+    # ── 交互体验：数据类查询要 30~110 秒，不能让机器人干等着 ──────────────
+    # 查询期间主动播报提示语（用框架的 speak_txt，会显示并朗读）
+    "interim_message": "正在为您查询数据，请稍等一下。",
+    "interim_delay_seconds": 0,          # 0 = 立刻说
+    "second_interim_message": "数据还在查询中，请再稍等一下。",
+    "second_interim_delay_seconds": 45,  # 45 秒还没回来就再说一句
+    # 工具运行期间刷新 conn.last_activity_time，避免服务端
+    # close_connection_no_voice_time(默认 120s) 判定"用户没说话"而道别并断开
+    "keepalive_activity": True,
+    # 同一会话内、完全相同的问题并发调用时只真正发起一次（实测机器人一次会并发
+    # 发 2~3 个相同调用，等于 2~3 倍额度）。只挡"同时重复"，不跨时间复用结果。
+    "dedupe_concurrent": True,
+    # 播报要求：附在查询原文前面交给机器人的大模型，约束它"只播报要点、不念表格"。
+    # 只影响"怎么念"，不影响查到的数据内容（明细仍完整保留在结果里）。
+    # 设为空字符串可关闭。
+    "speak_hint": DEFAULT_SPEAK_HINT,
     "model": "",                                # 可选：指定模型，留空由服务端决策
     "kb_ids": [],                               # 可选：限定知识库 ID
 }
@@ -148,16 +177,22 @@ GX_PHYTO_FUNCTION_DESC = {
     "function": {
         "name": "ask_guangxi_phyto",
         "description": (
-            "咨询「广西省级植保」专业数字员工，用于病虫害识别与防治、农药选择与轮换、"
-            "水稻/甘蔗等作物栽培管理、植保政策与测报数据等农业技术问题。"
-            "当用户问到具体病虫害防治方案、用药建议、本地植保测报等超出常识范围的专业问题时调用。"
+            "查询「广西省级植保」数字员工的**省级病虫害测报数据**：发生面积、发生程度、"
+            "灯诱/田间虫量、褐飞虱比例、防治面积与防治效果、分市/县明细、植保政策等。"
+            "当用户问到本地病虫害当前发生情况、测报数据这类需要真实数据的问题时调用。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "question": {
                     "type": "string",
-                    "description": "要咨询的问题原文，尽量带上作物、病虫害名称和地域/生育期等信息",
+                    "description": (
+                        "要查的数据，务必写清【作物/病虫】+【地区】+【时段】三要素，例如"
+                        "「广西 稻飞虱 最近一个月 全区 发生面积和发生程度」。"
+                        "⚠️ 只问数据，**不要**在问题里要求「防治建议/防治方案/用药方案」——"
+                        "实测这类措辞会触发上游大模型的内容过滤（content_filter）导致整轮失败；"
+                        "防治与用药建议请你自己根据查到的数据来回答。"
+                    ),
                 }
             },
             "required": ["question"],
@@ -398,6 +433,131 @@ def _clean_answer_text(text: str) -> str:
     return cleaned.strip()
 
 
+# ---------------------------------------------------------------------------
+# 规避上游内容过滤
+# ---------------------------------------------------------------------------
+# 2026-09-29 实测：问题里一旦要求「防治建议/用药方案」，数字员工内部会抛
+#   AGENT_STREAM_ERROR: Provider finish_reason: content_filter
+# 整轮失败（含该措辞的提问连续 2 次失败，不含的 1 次正常）。
+# 数据照查，防治/用药建议交给机器人自己的大模型回答即可，因此发送前先剥掉这类措辞。
+_CONTROL_WORDS = r"(?:防治建议|防治方案|防治措施|用药建议|用药方案|药剂推荐|打药建议|防治意见)"
+_CONTROL_CONJ_RE = re.compile(
+    r"(?:以及|还有|和|及|与|包括|包含|并给出|并附上)\s*(?:请)?(?:给出|提供|附上)?\s*" + _CONTROL_WORDS + r"(?:是什么|有哪些)?"
+)
+_CONTROL_TAIL_RE = re.compile(
+    r"(?:[，,、；;]\s*(?:并|请|再|同时)?\s*(?:给出|提供|附上|带上)?\s*"
+    + _CONTROL_WORDS + r"(?:是什么|有哪些)?)+"
+)
+
+
+def _sanitize_question(question: str) -> str:
+    """去掉问句里会触发 content_filter 的「防治建议/用药方案」类请求。"""
+    if not question:
+        return question
+    out = _CONTROL_CONJ_RE.sub("", question)
+    out = _CONTROL_TAIL_RE.sub("", out)
+    out = re.sub(r"[，,、；;]\s*([。？！?]|$)", r"\1", out)
+    out = re.sub(r"\s{2,}", " ", out).strip()
+    # 全被剥空说明原句就是纯「防治建议」，那就退回原句（宁可试一次）
+    return out if len(out) >= 6 else question
+
+
+# ---------------------------------------------------------------------------
+# 交互体验：查询期间的主动播报 + 活动保活
+# ---------------------------------------------------------------------------
+# 实测数据类问题要 30~110 秒，期间设备一直送"无语音"音频，服务端会在
+# close_connection_no_voice_time(默认 120s) 到期时判定用户已离开，
+# 让大模型说一句"时间过得真快…"然后断开 —— 用户体感就是"卡了很久最后莫名道别"。
+# 因此：① 主动播报"正在查询"；② 期间刷新 last_activity_time 阻止误判。
+
+
+def _speak_now(conn, text: str) -> None:
+    """用框架自带的 speak_txt 立刻播报一句（会显示在设备上并朗读）。"""
+    from core.handle.intentHandler import speak_txt  # 延迟导入，避免循环依赖
+
+    speak_txt(conn, text)
+
+
+async def _keepalive_activity(conn, stop: "asyncio.Event", interval: float = 15.0) -> None:
+    """工具运行期间周期性刷新活动时间，避免触发空闲告别。"""
+    while not stop.is_set():
+        try:
+            conn.last_activity_time = time.time() * 1000
+        except Exception:
+            return
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            continue
+
+
+async def _interim_speech(conn, cfg: Dict[str, Any], stop: "asyncio.Event") -> None:
+    """按配置在查询期间播报提示语。"""
+
+    async def say(text: str, delay: float) -> None:
+        if not text:
+            return
+        if delay > 0:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                return  # 提示语还没到时间，查询已经结束了
+        if stop.is_set():
+            return
+        try:
+            await asyncio.to_thread(_speak_now, conn, text)
+            logger.bind(tag=TAG).info(f"已播报提示语：{text}")
+        except Exception as exc:  # 播报失败绝不影响主流程
+            logger.bind(tag=TAG).warning(f"播报提示语失败：{exc}")
+
+    try:
+        d1 = float(cfg.get("interim_delay_seconds", 0) or 0)
+        d2 = float(cfg.get("second_interim_delay_seconds", 45) or 0)
+        await asyncio.gather(
+            say(str(cfg.get("interim_message") or ""), d1),
+            say(str(cfg.get("second_interim_message") or ""), d2),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.bind(tag=TAG).warning(f"提示语任务异常：{exc}")
+
+
+# ---------------------------------------------------------------------------
+# 并发去重（同一会话 + 同一问题只发一次真实请求）
+# ---------------------------------------------------------------------------
+
+_inflight: Dict[str, "asyncio.Future"] = {}
+
+
+def _get_or_create_query_task(
+    cfg: Dict[str, Any], question: str, conversation_id: str, key: str
+):
+    """返回 (task, created)。key 为空表示不去重。
+
+    机器人的大模型一次会并发发出 2~3 个完全相同的工具调用，每个都是一次完整
+    S2S 请求；去重后只有第一个真正发起，其余共享同一次结果。
+    """
+    if not key:
+        return asyncio.ensure_future(widget_chat(cfg, question, conversation_id)), True
+
+    existing = _inflight.get(key)
+    if existing is not None and not existing.done():
+        return existing, False
+
+    task = asyncio.ensure_future(widget_chat(cfg, question, conversation_id))
+    _inflight[key] = task
+
+    def _cleanup(t: "asyncio.Future", _key: str = key) -> None:
+        if _inflight.get(_key) is t:
+            _inflight.pop(_key, None)
+
+    task.add_done_callback(_cleanup)
+    return task, True
+
+
 async def widget_chat(cfg: Dict[str, Any], message: str, conversation_id: str = "") -> Dict[str, Any]:
     """调 Widget S2S 接口并把 SSE 聚合成完整文本。
 
@@ -555,12 +715,50 @@ async def ask_guangxi_phyto(conn: "ConnectionHandler", question: str = ""):
     if not question:
         return ActionResponse(Action.REQLLM, None, "没有收到要咨询的问题")
 
+    # 剥掉会触发上游 content_filter 的「防治建议/用药方案」类措辞（见 _sanitize_question）
+    if cfg.get("strip_control_requests", True):
+        cleaned = _sanitize_question(question)
+        if cleaned != question:
+            logger.bind(tag=TAG).info(f"已剥掉触发内容过滤的措辞：{question} -> {cleaned}")
+            question = cleaned
+
     session_id = str(getattr(conn, "session_id", "") or "")
+
+    # 并发去重：机器人的大模型一次会并发发出 2~3 个**完全相同**的工具调用
+    # （2026-09-29 实测：13:30:06/:09/:10 三次同问），每个都是一次完整 S2S 请求，
+    # 等于同一问题花 2~3 倍额度，而且三条并发各自播报一遍提示语、互相干扰。
+    # 这里让"同一会话 + 同一问题"只真正发一次，其余等这一次的结果。
+    key = ""
+    if cfg.get("dedupe_concurrent", True):
+        # 归一化：去掉空白与标点，避免"同一句话被 ASR 加了不同标点"逃过去重
+        normalized = re.sub(r"[\s，,。.、；;?？!！]+", "", question)
+        key = f"{session_id}|{normalized}"
+
+    stop = asyncio.Event()
+    bg_tasks = []
+    task, created = _get_or_create_query_task(cfg, question, _get_conv_id(session_id), key)
+
+    if created:
+        # 只有真正发起请求的那一次才播报/保活，避免并发播报多遍
+        if cfg.get("interim_message") or cfg.get("second_interim_message"):
+            bg_tasks.append(asyncio.create_task(_interim_speech(conn, cfg, stop)))
+        if cfg.get("keepalive_activity", True):
+            bg_tasks.append(asyncio.create_task(_keepalive_activity(conn, stop)))
+    else:
+        logger.bind(tag=TAG).info("同一问题已在查询中，复用该次请求（不重复计费）")
+
     try:
-        result = await widget_chat(cfg, question, _get_conv_id(session_id))
+        # shield：本次调用被用户打断时不牵连那次共享请求，其余并发调用仍能拿到结果
+        result = await asyncio.shield(task)
     except Exception as exc:  # 网络/签名等异常都不该打断对话
         logger.bind(tag=TAG).error(f"调用植保数字员工异常：{exc}")
         return ActionResponse(Action.REQLLM, None, "植保知识库暂时不可用，先按常识回答。")
+    finally:
+        stop.set()
+        for _t in bg_tasks:
+            _t.cancel()
+        if bg_tasks:
+            await asyncio.gather(*bg_tasks, return_exceptions=True)
 
     if not result["ok"] and not result["text"]:
         return ActionResponse(Action.REQLLM, None, f"植保知识库查询失败：{result['error']}")
@@ -572,5 +770,10 @@ async def ask_guangxi_phyto(conn: "ConnectionHandler", question: str = ""):
     if len(answer) > limit:
         answer = answer[:limit] + "…"
 
+    # 播报要求：查询原文是给大模型看的（含表格/明细），但用户是"听"的。
+    # 不约束的话它会照着念表格，800 字能念 1~2 分钟。
+    hint = str(cfg.get("speak_hint") or "").strip()
+    carried = f"{hint}\n\n---\n\n{answer}" if hint else answer
+
     logger.bind(tag=TAG).info(f"植保数字员工回答 {len(answer)} 字：{answer[:60]}…")
-    return ActionResponse(Action.REQLLM, answer, None)
+    return ActionResponse(Action.REQLLM, carried, None)
