@@ -51,8 +51,12 @@ managed_components/
 .venv/
 
 # Debug / Release files
-Debug/
-debug/
+# 注意：必须加前导斜杠锚定到 fw 根目录。
+# 写成 debug/ 会匹配任意层级名为 debug 的目录，曾把
+# components/esp-now/src/debug/（编译必需的源码）整个排除，
+# 导致全新克隆无法编译固件。
+/Debug/
+/debug/
 Release/
 release/
 out/
