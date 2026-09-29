@@ -30,9 +30,26 @@ constexpr std::uint32_t kBgColor         = 0x101417;
 constexpr std::uint32_t kInkColor        = 0x273238;
 constexpr std::uint32_t kPanelSoftColor  = 0xF7EFE3;
 
-// 硬编码测试凭证：只用于验证 "纯 STA 能否连上 jinhetech"。
-constexpr const char* kTestSsid     = "jinhetech";
-constexpr const char* kTestPassword = "Jinhetech1@#";
+// 测试凭证**不得硬编码在源码里**（本仓库为公开仓库，曾因此泄露过真实
+// WiFi 密码）。改为复用「本地配网注入」机制：把凭证写进
+//     fw/main/mibao_prov_local.h        （已被 .gitignore 排除）
+//     #define MIBAO_PROV_SSID     "你的WiFi名"
+//     #define MIBAO_PROV_PASSWORD "你的WiFi密码"
+// 未提供时本测试页会提示先创建该文件。
+#if __has_include("mibao_prov_local.h")
+#include "mibao_prov_local.h"
+#endif
+
+#ifdef MIBAO_PROV_SSID
+constexpr const char* kTestSsid = MIBAO_PROV_SSID;
+#else
+constexpr const char* kTestSsid = "";
+#endif
+#ifdef MIBAO_PROV_PASSWORD
+constexpr const char* kTestPassword = MIBAO_PROV_PASSWORD;
+#else
+constexpr const char* kTestPassword = "";
+#endif
 constexpr std::uint32_t kTimeoutMs  = 25000;
 
 }  // namespace
@@ -66,6 +83,10 @@ static void prov_task(void* arg)
         }
     }
     g_step = 2;  // adding ssid
+    if (kTestSsid[0] == '\0') {
+        mclog::tagWarn("ProvTest", "no test credentials: create fw/main/mibao_prov_local.h first");
+        return;
+    }
     SsidManager::GetInstance().AddSsid(kTestSsid, kTestPassword);
     mclog::tagInfo("ProvTest", "adding ssid done");
 
