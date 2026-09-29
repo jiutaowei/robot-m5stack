@@ -106,6 +106,9 @@ PASSWORD_ENV_NAMES = ("HEZOR_CLIENT_SECRET", "HEZOR2_HEADER_PK_PASSWORD")
 CERT_ENV_NAMES = ("HEZOR_CERT_CONTENT", "HEZOR2_CERT_CONTENT")
 PATH_ENV_NAMES = ("HEZOR2_HEADER_PK_FILEPATH", "HEZOR_CERT_PATH")
 APP_NAME_ENV_NAMES = ("HEZOR_APP_NAME", "HEZOR2_APP_NAME")
+# 接口地址也可用环境变量覆盖（vendor 的 .env 就是这个命名）——
+# 便于把 base_url 指向本地模拟服务做联调，不消耗 Hezor 额度。
+BASE_URL_ENV_NAMES = ("HEZOR2_API_BASE_URL", "HEZOR_API_BASE_URL")
 # 2026-09-29 实测结论：新用户（机器人专用 caller）自带额度但没有 mode 路由，
 # 因此必须显式传 workerId 直连白名单内的数字员工。这两个变量与 guangxi_ai_chat 的 .env 同名。
 WORKER_ID_ENV_NAMES = ("HEZOR2_WORKER_ID", "WORKER_ID", "HEZOR_WORKER_ID")
@@ -153,7 +156,7 @@ DEFAULT_PLUGIN_CONFIG: Dict[str, Any] = {
     # content_filter，让数字员工整轮失败；数据照查，防治建议由机器人自己回答。
     "strip_control_requests": True,
     # ── 交互体验：数据类查询要 30~110 秒，不能让机器人干等着 ──────────────
-    # 查询期间主动播报提示语（用框架的 speak_txt，会显示并朗读）
+    # 查询期间主动播报提示语（直接入队 TTS，不写对话历史，见 _speak_now）
     "interim_message": "正在为您查询数据，请稍等一下。",
     "interim_delay_seconds": 0,          # 0 = 立刻说
     "second_interim_message": "数据还在查询中，请再稍等一下。",
@@ -179,7 +182,10 @@ GX_PHYTO_FUNCTION_DESC = {
         "description": (
             "查询「广西省级植保」数字员工的**省级病虫害测报数据**：发生面积、发生程度、"
             "灯诱/田间虫量、褐飞虱比例、防治面积与防治效果、分市/县明细、植保政策等。"
-            "当用户问到本地病虫害当前发生情况、测报数据这类需要真实数据的问题时调用。"
+            "⚠️ 只要用户问的是「某地某病虫 近期/最新/最近一周/最近一个月/本周/第几期 "
+            "发生情况、发生面积、发生程度、虫情、测报数据」，**必须优先调用本工具**，"
+            "不要用 web_search 代替 —— 网上搜不到省级植保测报数据，搜出来的都是旧闻或"
+            "泛泛而谈。只有用户明确要求「上网查/搜一下新闻」时才用 web_search。"
         ),
         "parameters": {
             "type": "object",
@@ -232,6 +238,12 @@ def load_plugin_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any
         merged["worker_id"] = _first_env(WORKER_ID_ENV_NAMES)
     if not merged.get("app_name"):
         merged["app_name"] = _first_env(APP_NAME_ENV_NAMES)
+    if not merged.get("base_url"):
+        merged["base_url"] = _first_env(BASE_URL_ENV_NAMES)
+    env_base = _first_env(BASE_URL_ENV_NAMES)
+    if env_base:
+        # 环境变量优先：便于临时指向本地模拟服务
+        merged["base_url"] = env_base
 
     # claims = 默认值 + 配置 + 环境变量（后者优先，缺省才用前者的值）
     claims = dict(DEFAULT_CLAIMS)
@@ -472,23 +484,60 @@ def _sanitize_question(question: str) -> str:
 
 
 def _speak_now(conn, text: str) -> None:
-    """用框架自带的 speak_txt 立刻播报一句（会显示在设备上并朗读）。"""
-    from core.handle.intentHandler import speak_txt  # 延迟导入，避免循环依赖
+    """播报一句提示语，且**不写对话历史**。
 
-    speak_txt(conn, text)
+    不能用框架的 speak_txt：它最后会执行 conn.dialogue.put(Message(role="assistant"))，
+    而此刻 assistant(tool_calls) 对应的 tool 结果还没回填 —— 插入这条 assistant 消息会
+    破坏 tool_calls → tool(result) 的配对，框架随后用
+    {"status": "interrupted", "message": "动作已取消/被打断"} 顶替真实结果。
+    实测：工具只跑了 7 秒就被判"被打断"，机器人回答"要我再查一次吗？"，
+    30~100 秒的查询永远拿不到结果。
+
+    这里照 core/handle/receiveAudioHandle.max_out_size 的做法直接入队 TTS，
+    只影响"出声"，不碰对话历史。
+    """
+    from core.providers.tts.dto.dto import (  # 延迟导入，避免拉起整套 TTS 依赖
+        ContentType,
+        SentenceType,
+        TTSMessageDTO,
+    )
+
+    conn.tts.store_tts_text(conn.sentence_id, text)
+    conn.tts.tts_text_queue.put(
+        TTSMessageDTO(
+            sentence_id=conn.sentence_id,
+            sentence_type=SentenceType.FIRST,
+            content_type=ContentType.ACTION,
+        )
+    )
+    conn.tts.tts_one_sentence(conn, ContentType.TEXT, content_detail=text)
+    conn.tts.tts_text_queue.put(
+        TTSMessageDTO(
+            sentence_id=conn.sentence_id,
+            sentence_type=SentenceType.LAST,
+            content_type=ContentType.ACTION,
+        )
+    )
+    # 刻意不调用 conn.dialogue.put(...)：见上面 docstring 说明
 
 
 async def _keepalive_activity(conn, stop: "asyncio.Event", interval: float = 15.0) -> None:
     """工具运行期间周期性刷新活动时间，避免触发空闲告别。"""
+    logger.bind(tag=TAG).info(f"活动保活已启动（每 {interval:.0f} 秒刷新一次）")
+    ticks = 0
     while not stop.is_set():
         try:
             conn.last_activity_time = time.time() * 1000
-        except Exception:
+            ticks += 1
+        except Exception as exc:
+            logger.bind(tag=TAG).warning(f"活动保活异常退出：{exc}")
             return
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
         except asyncio.TimeoutError:
+            logger.bind(tag=TAG).info(f"活动保活刷新第 {ticks} 次（last_activity_time 已更新）")
             continue
+    logger.bind(tag=TAG).info(f"活动保活结束（共刷新 {ticks} 次）")
 
 
 async def _interim_speech(conn, cfg: Dict[str, Any], stop: "asyncio.Event") -> None:
@@ -761,6 +810,8 @@ async def ask_guangxi_phyto(conn: "ConnectionHandler", question: str = ""):
             await asyncio.gather(*bg_tasks, return_exceptions=True)
 
     if not result["ok"] and not result["text"]:
+        # 必须打日志：这条分支以前是静默的，导致"工具瞬间返回却没有结果"难以定位
+        logger.bind(tag=TAG).error(f"植保知识库查询失败：{result['error']}")
         return ActionResponse(Action.REQLLM, None, f"植保知识库查询失败：{result['error']}")
 
     _set_conv_id(session_id, result.get("conversation_id", ""))
