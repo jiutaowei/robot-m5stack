@@ -51,13 +51,17 @@ managed_components/
 .venv/
 
 # Debug / Release files
-Debug/
-debug/
-Release/
-release/
-out/
-bin/
-obj/
+# NOTE: keep these anchored to the project root ("/debug/", "/bin/", ...).
+# Unanchored "debug/" also matched nested SOURCE directories and silently
+# dropped components/esp-now/src/debug/ from the repository, which broke
+# cmake ("Include directory .../src/debug/include is not a directory").
+/Debug/
+/debug/
+/Release/
+/release/
+/out/
+/bin/
+/obj/
 
 *.code-workspace
 

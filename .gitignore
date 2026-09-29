@@ -5,6 +5,15 @@
 *.xlsx
 *.key
 *.pem
+# MetaInfo 签名私钥目录（广西植保 S2S 的 private_key.pem 等）
+**/.keys/
+# 本地 env 文件（含 client_secret / API Key，禁止入库；.env.example 仍可入库）
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
 
 # ===== 构建产物 / 编译缓存 =====
 robot-updating/fw/build/
@@ -45,6 +54,9 @@ archive/
 # ===== 系统文件 =====
 .DS_Store
 Thumbs.db
+
+# ===== 本机工具链（ESP-IDF / esptool / Python venv，数 GB，不入库）=====
+.tools/
 
 # ===== 本地配网凭据（含 WiFi 密码，禁止入库）=====
 robot-updating/fw/main/mibao_prov_local.h
