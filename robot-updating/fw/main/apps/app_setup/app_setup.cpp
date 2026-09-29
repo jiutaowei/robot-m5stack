@@ -46,6 +46,15 @@ void AppSetup::onOpen()
             "Wi-Fi",
             {{"切换 Wi-Fi",
               [&]() {
+                  _destroy_menu = true;
+                  // 屏幕直连：机器人自己扫描 + 选网 + 虚拟键盘输密码，
+                  // 连上后凭据写 NVS，无需重启（发现任务会自己跟上服务器地址）
+                  _need_warm_reset = false;
+                  _worker          = std::make_unique<OnScreenWifiWorker>();
+              }},
+             // 官方 M5 StackChan World App 扫码配网（保留原流程）
+             {"M5 App 配网",
+              [&]() {
                   _destroy_menu    = true;
                   _need_warm_reset = true;
                   _worker          = std::make_unique<WifiSetupWorker>();

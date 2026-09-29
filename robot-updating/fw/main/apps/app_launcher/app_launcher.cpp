@@ -49,12 +49,11 @@ void AppLauncher::onLauncherOpen()
     LvglLockGuard lock;
 
     if (!_startup_checked && SsidManager::GetInstance().GetSsidList().empty()) {
-        // 官方 StackChan-MCP 配网流程移植：开机无已保存 SSID → 自动进入
-        // 浏览器 SoftAP 配网模式（手机连热点 → 192.168.4.1 → 选 Wi-Fi）。
-        // 配网完成后自动纯 STA 连接，成功后回到 launcher。等价于官方
-        // WifiBoard::TryWifiConnect 的 "无 SSID 则 StartConfigMode" 分支。
-        mclog::tagInfo(getAppInfo().name, "no saved ssid, auto enter hotspot provisioning");
-        _startup_worker = std::make_unique<setup_workers::HotspotSetupWorker>();
+        // 开机无已保存 SSID → 直接进「屏幕直连 Wi-Fi」：机器人自己扫描、
+        // 在屏上选网、虚拟键盘输密码即可联网，不强制要求手机。
+        // 该页保留「手机配网」按钮回退到 SoftAP 配网（见 OnScreenWifiWorker）。
+        mclog::tagInfo(getAppInfo().name, "no saved ssid, enter on-screen wifi setup");
+        _startup_worker = std::make_unique<setup_workers::OnScreenWifiWorker>();
         view::create_status_bar(0x2DBE8D, 0x0B2530);
     } else {
         create_launcher_view();

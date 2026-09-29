@@ -125,10 +125,18 @@ extern "C" void app_main(void)
         DestroyMooncake();
     }
 
-    // 进入 AI 对话前最后快速刷新一次服务器地址（单次、短超时，失败不阻塞）：
-    // 覆盖"开机后 WiFi 才连上、launcher 配置拉取已错过"的情况，
-    // 保证 xiaozhi 的 OTA 用的是当前有效的服务器地址。
-    mibao::refreshServerAddressFromDiscovery(600);
+    // 进入 AI 对话前必须确认服务器地址：NVS 里没有 ota_url 时，xiaozhi 框架会
+    // 回落到编译期默认值 CONFIG_OTA_URL（公网 api.tenclass.net）—— 实测配网后
+    // 首次对话就是这样被送到公网小智云，回答变成通用助手的英文/泛化内容。
+    // 发现是 UDP 广播往返，刚连上 WiFi 时经常前几次收不到，所以重试几次。
+    bool server_found = false;
+    for (int attempt = 0; attempt < 3 && !server_found; attempt++) {
+        server_found = mibao::refreshServerAddressFromDiscovery(2000);
+        if (!server_found) {
+            mclog::tagWarn("Boot", "server discovery attempt {} failed", attempt + 1);
+        }
+    }
+    mclog::tagInfo("Boot", "server discovery done: found={}, ota_url='{}'", server_found, mibao::getOtaUrl());
 
     // Start xiaozhi, never returns
     GetHAL().startXiaozhi();

@@ -189,6 +189,85 @@ private:
 };
 
 /**
+ * @brief 屏幕直连 Wi-Fi（无需手机）
+ *
+ * 在机器人自己的屏幕上：扫描周边 AP → 点选 → 虚拟键盘输密码 → 连接 → 显示结果。
+ * 扫描/连接全部在独立 FreeRTOS 任务里做（LVGL 线程只画界面），
+ * 凭据写入 SsidManager（NVS "wifi"），重启后由框架自动重连。
+ * 「手机配网」按钮回退到 HotspotSetupWorker（SoftAP 配网）。
+ */
+struct WifiJobCtx;  // 定义在 on_screen_wifi.cpp
+
+class OnScreenWifiWorker : public WorkerBase {
+public:
+    OnScreenWifiWorker();
+    ~OnScreenWifiWorker();
+    void update() override;
+
+private:
+    enum class Page {
+        Scan,        // 扫描列表
+        Password,    // 输入密码
+        Connecting,  // 连接中
+        Result,      // 成功/失败
+    };
+
+    Page _page = Page::Scan;
+
+    // 关键：LVGL 事件回调里绝对不能销毁控件。点列表项/按钮时若在回调内直接
+    // 切页面，会 delete 正在派发事件的那个对象 → use-after-free → panic 重启。
+    // 所以回调只写一个「待办」，真正的切页/起任务都在 update() 里做。
+    enum class Pending {
+        None,
+        ToScan,
+        ToPassword,
+        Connect,
+        Hotspot,
+        Finish,
+    };
+    Pending _pending = Pending::None;
+    std::string _pending_ssid;
+    std::string _pending_pwd;
+
+    std::shared_ptr<WifiJobCtx> _job;
+    std::unique_ptr<HotspotSetupWorker> _hotspot;  // 「手机配网」回退
+
+    bool _list_built       = false;
+    bool _scan_requested   = false;
+    bool _connect_started  = false;
+    bool _connect_ok       = false;
+    bool _was_saved_before = false;
+    std::uint32_t _result_at_ms = 0;
+    std::uint32_t _last_scroll_ms = 0;
+    std::string _sel_ssid;
+    std::string _last_pwd;  // 失败重试时用（输入框会随页面销毁）
+
+    std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _label_title;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _label_status;
+    std::unique_ptr<uitk::lvgl_cpp::Container> _list;
+    std::vector<std::unique_ptr<uitk::lvgl_cpp::Button>> _rows;
+    std::unique_ptr<uitk::lvgl_cpp::Label> _label_password_for;
+    std::unique_ptr<uitk::lvgl_cpp::TextArea> _ta_password;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_primary;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_secondary;
+    std::unique_ptr<uitk::lvgl_cpp::Button> _btn_back;
+    lv_obj_t* _keyboard = nullptr;
+
+    void build_scan_page();
+    void build_password_page();
+    void build_status_page(const char* title, const std::string& detail, bool show_retry);
+    void clear_pages();
+
+    void request_scan();
+    void request_connect(const std::string& password);
+    void start_hotspot_fallback();
+
+    void rebuild_rows();
+    void sync_from_job();
+};
+
+/**
  * @brief
  *
  */
