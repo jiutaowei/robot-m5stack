@@ -10,8 +10,12 @@
 ## 🚀 展会 / 现场部署（Windows 笔记本 + 手机热点 + 机器人）
 见 [展会部署清单.md](展会部署清单.md)，配套一键脚本：
 ```
-robot-updating/scripts/windows/setup_windows.bat   # 装环境+防火墙+关睡眠
-robot-updating/scripts/windows/start_server.bat    # 启动服务器
+robot-updating/scripts/windows/setup_windows.bat       # 装环境+防火墙+关睡眠+生成配置
+robot-updating/scripts/windows/start_server.bat        # 启动服务器
+robot-updating/scripts/windows/install_autostart.bat   # 注册登录自启（可选）
+
+# macOS 同等能力
+robot-updating/scripts/macos/install_autostart.sh      # 登录自启+进程守护+防睡眠
 ```
 
 ## 🔧 遇到问题？
