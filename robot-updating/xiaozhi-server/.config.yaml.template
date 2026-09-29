@@ -56,3 +56,61 @@ TTS:
     type: edge
     voice: zh-CN-XiaoxiaoNeural
     output_dir: tmp/
+
+# ============================================================================
+# 广西省级植保 · S2S 数字员工工具（可选）
+# ----------------------------------------------------------------------------
+# 插件实现：plugins_func/functions/ask_guangxi_phyto.py
+# 接口：POST https://hezor.com/api/v1/widget/chat（X-META-INFO JWT + X-APP-NAME）
+# 凭证：cert_content（Ed25519 加密私钥）+ client_secret（私钥密码），
+#       由 Hezor 管理员在 Casdoor 创建，可用 GET /app-certs 获取。
+#       S2S 调用不做 Origin/域名白名单校验（那只作用于浏览器 iframe）。
+#
+# 启用两步：
+#   1) 提供私钥：环境变量 HEZOR_CERT_CONTENT（PEM 内容）或
+#      private_key_path 指向 .keys/private_key.pem（该目录已 gitignore）
+#      密码用环境变量 HEZOR_CLIENT_SECRET（或 HEZOR2_HEADER_PK_PASSWORD）
+#   2) 在 Intent.function_call.functions 列表里加上 ask_guangxi_phyto
+#
+# 未配置私钥时插件不会报错，只返回“知识库暂未配置”，对话其余功能不受影响。
+# 自检命令：python scripts/test_hezor_widget.py --self-test
+# ============================================================================
+# Intent:
+#   function_call:
+#     functions:
+#       - change_role
+#       - web_search
+#       - get_weather
+#       - get_news_from_newsnow
+#       - play_music
+#       - ask_guangxi_phyto        # ← 启用植保知识工具：取消本行注释
+#   ⚠️ functions 是「列表替换」而非合并：写进 data/.config.yaml 时必须把上面原有几项一并保留
+
+plugins:
+  ask_guangxi_phyto:
+    base_url: https://hezor.com/api/v1
+    app_name: phyto_province_gx_app
+    # ⚠️ 必须传 workerId：机器人专用 caller 没有配置 mode 路由，
+    #    靠 workerId 直连白名单内的数字员工（2026-09-29 实测：只有这样才能拿到回答）
+    worker_id: ea532b59-6311-4d5b-99fb-2553d088cc67
+    private_key_path: .keys/private_key.pem
+    private_key_password: ""            # 留空则自动试 HEZOR_CLIENT_SECRET / HEZOR2_HEADER_PK_PASSWORD
+    token_ttl_seconds: 3600             # 文档建议 ≤ 1 小时
+    token_refresh_margin_seconds: 300   # 提前 5 分钟重签
+    timeout_seconds: 120               # 数据类问题内部工具调用多，实测可超 60s
+    max_answer_chars: 800
+    # 平台流式语义：数字员工重新生成时会把整篇文档从头再发一遍（该片段与当前文档
+    # 开头有 ≥16 字相同的公共前缀）。据此按快照替换，避免 2~3 份重复内容；
+    # 正常片段长度 2~495 字不等，所以不能用长度单独判定。设 0 关闭该判定。
+    snapshot_min_chars: 16
+    # MetaInfo JWT 载荷（与官方文档一致；注意是 subject，不是标准 JWT 的 sub）
+    # caller_id 用机器人专用用户：平台会自动建号并自带额度
+    claims:
+      subject: 广西省级植保
+      subject_code: phyto_province_gx_app
+      caller_id: guangxi_ai_robot_m5stack@phyto_province_gx_app.local
+      creation_slug: guangxi_ai_chat
+      creation_name: 广西AI助手
+    # 需要透传业务标签时（文档：extras 里的键名用 var_* 前缀）
+    # meta_extras:
+    #   var_device_id: mibao-01
