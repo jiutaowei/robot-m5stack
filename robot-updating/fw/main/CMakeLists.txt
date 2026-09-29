@@ -336,10 +336,16 @@ target_compile_definitions(${COMPONENT_LIB}
                     PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
                     )
 
+# 跨平台：用 CMake 找到的 Python 解释器，而不是裸 `python`。
+# Windows 上 `python` 可能不在 PATH，或指向应用商店占位程序导致构建卡住。
+if(NOT DEFINED Python3_EXECUTABLE)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+endif()
+
 # Add generation rules
 add_custom_command(
     OUTPUT ${LANG_HEADER}
-    COMMAND python ${XIAOZHI_MAIN_DIR}/../scripts/gen_lang.py
+    COMMAND ${Python3_EXECUTABLE} ${XIAOZHI_MAIN_DIR}/../scripts/gen_lang.py
             --language "${LANG_DIR}"
             --output "${LANG_HEADER}"
     DEPENDS
@@ -451,7 +457,7 @@ function(build_default_assets_bin)
     # Create custom command to build assets
     add_custom_command(
         OUTPUT ${GENERATED_ASSETS_BIN}
-        COMMAND python ${XIAOZHI_MAIN_DIR}/../scripts/build_default_assets.py ${BUILD_ARGS}
+        COMMAND ${Python3_EXECUTABLE} ${XIAOZHI_MAIN_DIR}/../scripts/build_default_assets.py ${BUILD_ARGS}
         DEPENDS
             ${SDKCONFIG}
             ${XIAOZHI_MAIN_DIR}/../scripts/build_default_assets.py
