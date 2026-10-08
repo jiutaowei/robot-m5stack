@@ -26,6 +26,11 @@ list(APPEND STACK_CHAN_SOURCES "assets/fonts/mibao_zh_font.c")
 # 米宝精简中文字体（16px）：会议/个人灵感信息栏、物联网设备按键等小字场景，
 # 与 meeting_zh_font 同尺寸，避免 26px 字体在小面板中过大重叠。
 list(APPEND STACK_CHAN_SOURCES "assets/fonts/mibao_zh_font_16.c")
+# 米宝生僻字兜底字体（20px）：气泡用的 assets 字体（font_puhui_common_20_4.bin，
+# 源自 puhui-common.ttf）缺 虱/螟/蚜/蝽 等植保高频字，本字体只含这些缺字，
+# 由 xiaozhi-esp32/main/display/lvgl_display/lvgl_font.cc 挂为 LVGL fallback。
+# 词表见 assets/fonts/mibao_cn_extra_vocab.txt，生成脚本 robot-updating/scripts/gen_extra_font.py。
+list(APPEND STACK_CHAN_SOURCES "assets/fonts/mibao_cn_extra_20_4.c")
 
 # Define source files
 set(SOURCES "audio/audio_codec.cc"
