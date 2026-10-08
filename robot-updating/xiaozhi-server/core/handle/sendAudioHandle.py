@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from core.utils import textUtils
+from core.utils import latency_interim
 from core.utils.util import audio_to_data
 from core.providers.tts.dto.dto import SentenceType
 from core.utils.audioRateController import AudioRateController
@@ -19,6 +20,8 @@ PRE_BUFFER_COUNT = 5
 
 
 async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text, sentence_id=None):
+    # 有人开始说话了（框架回答/工具播报/垫话都走这里）→ 撤掉"决策期垫话"，别插嘴
+    latency_interim.cancel(conn)
     # 跳过旧句子残留音频
     if sentence_id is not None and sentence_id != conn.sentence_id:
         return
@@ -286,6 +289,8 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
 
 async def send_tts_message(conn: "ConnectionHandler", state, text=None):
     """发送 TTS 状态消息"""
+    # 任何一方开始说话（框架回答 / 插件播报 / 垫话）→ 撤掉"决策期垫话"
+    latency_interim.cancel(conn)
     if text is None and state == "sentence_start":
         return
     message = {"type": "tts", "state": state, "session_id": conn.session_id}

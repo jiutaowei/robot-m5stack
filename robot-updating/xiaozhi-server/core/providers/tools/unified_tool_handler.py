@@ -169,10 +169,15 @@ class UnifiedToolHandler:
             self.logger.debug(f"调用函数: {function_name}, 参数: {arguments}")
 
             # 发送工具调用显示消息到设备
-            try:
-                await send_display_message(self.conn, f"% {function_name}")
-            except Exception as e:
-                self.logger.warning(f"发送工具调用显示消息失败: {e}")
+            # ⚠️ 默认关闭：它会把 "% ask_guangxi_phyto" 当成一条「用户消息」推给设备，
+            # 用户屏幕上就会出现一个 %工具名 的气泡，对用户没有意义。
+            # 需要排查"到底调了哪个工具"时，在 data/.config.yaml 里设
+            #   show_tool_name_on_device: true
+            if self.conn.config.get("show_tool_name_on_device", False):
+                try:
+                    await send_display_message(self.conn, f"% {function_name}")
+                except Exception as e:
+                    self.logger.warning(f"发送工具调用显示消息失败: {e}")
 
             # 执行工具调用
             result = await self.tool_manager.execute_tool(function_name, arguments)

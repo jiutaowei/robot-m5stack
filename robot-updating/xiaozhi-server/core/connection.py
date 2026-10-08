@@ -31,6 +31,7 @@ from core.handle.reportHandle import report, enqueue_tool_report
 from core.providers.tts.default import DefaultTTS
 from concurrent.futures import ThreadPoolExecutor
 from core.utils.dialogue import Message, Dialogue
+from core.utils import latency_interim
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
 from core.providers.tools.unified_tool_handler import UnifiedToolHandler
@@ -1205,6 +1206,7 @@ class ConnectionHandler:
                 )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+            latency_interim.cancel(self)
             return None
 
         # 处理流式响应
@@ -1213,8 +1215,12 @@ class ConnectionHandler:
         tool_calls_list = []  # 格式: [{"id": "", "name": "", "arguments": ""}]
         content_arguments = ""
         emotion_flag = True
+        # 决策期垫话：下面 for 的**第一次迭代**才真正发起 LLM 请求，用户等的就是这段。
+        # 首个响应一到就取消（见 core/utils/latency_interim.py）。
+        latency_interim.start(self, depth, user_turn=query is not None)
         try:
             for response in llm_responses:
+                latency_interim.cancel(self)
                 if self.client_abort:
                     break
                 if self.intent_type == "function_call" and functions is not None:
@@ -1281,6 +1287,7 @@ class ConnectionHandler:
                         )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
+            latency_interim.cancel(self)
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
                     sentence_id=current_sentence_id,

@@ -20,6 +20,22 @@ prompt: |
 wakeup_words:
   - "米宝米宝"
 
+# 工具调用时是否把 "% 工具名" 推到设备气泡（默认 false）。
+# 对用户无意义，且会当成一条"用户消息"进对话历史，故默认关闭。
+# 排查工具是否被调用时，看服务端日志的「执行工具: xxx」即可。
+show_tool_name_on_device: false
+
+# ── 决策期垫话（2026-10-08）──────────────────────────────────────────
+# 「说完 → 大模型吐第一个字」之间有 1~22 秒空档（实测 58 个样本：中位 5 秒、
+# 尾部 10/13/18/20/22 秒），这段时间用户听不到任何声音。超时未出字就先垫一句；
+# 大模型一出字（或任何一方开始说话）自动撤销。垫话不写对话历史，不影响工具调用配对。
+latency_interim:
+  enabled: true
+  seconds: 5.0            # 设小更敏捷，但正常闲聊（1~3 秒）也会被垫话
+  texts:
+    - "稍等，我看一下。"
+    - "嗯，我查一下。"
+
 selected_module:
   ASR: Qwen3ASRFlash
   LLM: HezorLLM
@@ -78,12 +94,17 @@ TTS:
 # Intent:
 #   function_call:
 #     functions:
-#       - change_role
 #       - web_search
 #       - get_weather
-#       - get_news_from_newsnow
+#       - ask_guangxi_phyto        # ← 启用植保知识工具
+#     # 不发给大模型的工具（可选）。只影响"发给大模型的清单"，工具仍可执行；
+#     # 依据实测调用数据精简：22 个工具只有 6 个被调用过，清单越短挑工具越快。
+#     # 恢复某个工具 = 从本列表删掉它。
+#     exclude_functions:
+#       - get_lunar
 #       - play_music
-#       - ask_guangxi_phyto        # ← 启用植保知识工具：取消本行注释
+#       - get_news_from_newsnow
+#       - change_role
 #   ⚠️ functions 是「列表替换」而非合并：写进 data/.config.yaml 时必须把上面原有几项一并保留
 
 plugins:
@@ -103,8 +124,10 @@ plugins:
     # content_filter（AGENT_STREAM_ERROR），让数字员工整轮失败。数据照查，
     # 防治/用药建议由机器人自己的大模型回答。设 false 关闭。
     strip_control_requests: true
-    # ── 交互体验：数据类问题实测 30~110s，不能让机器人干等着 ──────────
-    # 查询期间主动播报（走框架的 speak_txt，会朗读并在屏幕上显示）
+    # ── 交互体验：数据类问题实测 11~308s，不能让机器人干等着 ──────────
+    # ⚠️ 下面两句**只在 `progress_enabled: false` 时生效**：
+    #    - async_mode: true（默认）时开头那句 ack 由框架播报；
+    #    - progress_enabled: true（默认）时由 progress_messages 分级播报代替。
     interim_message: "正在为您查询数据，请稍等一下。"
     interim_delay_seconds: 0            # 0 = 立刻播报
     second_interim_message: "数据还在查询中，请再稍等一下。"
@@ -115,7 +138,51 @@ plugins:
     # 同一会话内、完全相同的问题并发调用时只真正发起一次（实测机器人的大模型
     # 一次会并发发 2~3 个相同调用，等于 2~3 倍额度）。只挡"同时重复"。
     dedupe_concurrent: true
+    # ── 异步模式（推荐）：工具**立即返回**一句"正在查询"，后台继续查，
+    #    数据回来**主动播报**。查询的 1~2 分钟里用户可以继续聊别的，
+    #    插话也不会作废这一轮；而且不再有"框架工具超时"悬着。
+    #    播报文案由确定性提取生成（不经过大模型，不额外耗额度）。
+    #    设 false 退回阻塞式（数据交给大模型组织回答，但等待期间无法对话）。
+    async_mode: true
+    async_ack_message: "正在为您查询数据，请稍等一下，查到后我马上告诉您。"
+    async_pending_message: "这个还在查，马上就好。"
+    async_prefix: "您问的植保数据回来了，"
+    # 等待超过 late_announce_seconds 才返回时，换一句更体贴的开场
+    async_late_prefix: "不好意思让您久等了，"
+    async_speak_wait_seconds: 30   # 数据回来时等"用户说完+机器人这轮说完"再插话，上限
+    # ── 查询期间的进度播报（2026-10-08 用户体贴优化）────────────────
+    # 实测植保查询 11~308 秒且方差极大；只在开头播一句"正在查询"会让用户干等。
+    # 这里按时间里程碑分级播报，且**正文一开始流式返回就停止**（马上有答案了）。
+    # 文案刻意不带技术细节；设 progress_enabled: false 可整体关闭。
+    progress_enabled: true
+    progress_messages:
+      - { at: 20,  text: "数据还在查，我盯着呢，稍等一下。" }
+      - { at: 60,  text: "这份省级植保数据一般要一分钟左右，您稍等。" }
+      - { at: 150, text: "还在查，这次后台比较慢；一有结果我马上告诉您。" }
+    progress_min_gap_seconds: 15      # 两条进度之间最小间隔，防串话
+    progress_quiet_wait_seconds: 6    # 每次播报前最多等这么久让用户说完
+    # ── 有界等待（避免无限等）──────────────────────────────────────
+    # 单次查询总时长上限（秒，0=不限）。到点中止并给出可操作提示。
+    # 注意 timeout_seconds 是"单次读超时"，对持续有流量的流式接口无效
+    # （实测一次跑到 308 秒都没触发），所以必须另设总时限。
+    query_deadline_seconds: 360
+    # ⚠️ 仅 async_mode: true 时这个总时限说了算。若改成 blocking 模式，
+    #    有效上限是框架的 tool_call_timeout（默认 180s）——它比本值先到期。
+    late_announce_seconds: 90         # 超过这个时长才返回，就改口"不好意思让您久等了"
+    # ── 卡死早停 + 换会话重试 ─────────────────────────────────────────
+    # 平台会进"工具调用死循环"（实测 360s 零输出），此时早停并换新会话重试，
+    # 比干等 6 分钟更可能拿到数据。判据是"长时间零输出"，不是"慢"。
+    stall_no_output_seconds: 150
+    stall_max_tool_calls: 25          # 0=关闭该判据
+    retry_on_stall: 1
+    # ── 短时结果缓存 ──────────────────────────────────────────────────
+    # 省级周报一周才更新；同一问题短时间内重复问 → 直接播报，不查平台、不花额度。
+    result_cache_seconds: 600         # 0=关闭
+    cache_hit_prefix: "刚才查过了，"
     # ── 播报要求：附在查询原文前交给机器人的大模型，约束它"只播报要点、不念表格"。
+    #    ⚠️ 只在**阻塞模式**（async_mode: false）生效：异步模式由确定性的
+    #    _spoken_summary() 生成播报，不经过大模型，因此 speak_hint / max_answer_chars
+    #    在异步模式下无效（播报长度由 _spoken_summary 自己控制）。
     #    只影响"怎么念"，不影响查到的数据（明细仍完整保留在结果里）。留空可关闭。
     speak_hint: |
       【播报要求·重要】用户是语音对话，看不到屏幕。

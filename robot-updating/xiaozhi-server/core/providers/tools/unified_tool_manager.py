@@ -27,22 +27,57 @@ class ToolManager:
         self._cached_tools = None
         self._cached_function_descriptions = None
 
+    def _excluded_names(self) -> set:
+        """按配置隐藏工具（大模型看不到，同时也无法被调用）。
+
+        data/.config.yaml:
+            Intent:
+              function_call:
+                exclude_functions: [play_music, get_lunar]
+        动机：工具清单越长，大模型"挑工具"越慢、越容易挑错，每轮 prompt 也更大/更贵。
+        实测米宝 22 个工具里只有 6 个被真正调用过，其余 16 个为 0 次。
+
+        注意：隐藏是**彻底的** —— 因为 has_tool()/execute_tool() 都走这份清单，
+        所以被隐藏的工具即使大模型凭记忆点名也无法执行（这是期望行为）。
+        框架内部没有对 play_music/get_lunar 这类工具做隐式调用，所以隐藏安全。
+        """
+        try:
+            cfg = getattr(self.conn, "config", None) or {}
+            func_call = (cfg.get("Intent") or {}).get("function_call") or {}
+            raw = func_call.get("exclude_functions") or []
+            if isinstance(raw, str):
+                raw = [raw]
+            if not isinstance(raw, (list, tuple)):
+                return set()
+            return {str(x).strip() for x in raw if str(x).strip()}
+        except Exception:
+            return set()
+
     def get_all_tools(self) -> Dict[str, ToolDefinition]:
         """获取所有工具定义"""
         if self._cached_tools is not None:
             return self._cached_tools
 
+        excluded = self._excluded_names()
+        hidden = set()
         all_tools = {}
         for tool_type, executor in self.executors.items():
             try:
                 tools = executor.get_tools()
                 for name, definition in tools.items():
+                    if name in excluded:
+                        hidden.add(name)
+                        continue
                     if name in all_tools:
                         self.logger.warning(f"工具名称冲突: {name}")
                     all_tools[name] = definition
             except Exception as e:
                 self.logger.error(f"获取{tool_type.value}工具时出错: {e}")
 
+        if hidden:
+            self.logger.info(
+                f"按 exclude_functions 隐藏 {len(hidden)} 个工具（不发给大模型）：{sorted(hidden)}"
+            )
         self._cached_tools = all_tools
         return all_tools
 
