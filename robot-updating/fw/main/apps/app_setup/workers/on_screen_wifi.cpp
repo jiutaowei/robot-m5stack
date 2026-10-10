@@ -53,6 +53,9 @@ constexpr uint32_t kTextColor = 0x26206A;
 constexpr uint32_t kHintColor = 0x7E7B9C;
 constexpr uint32_t kRowColorA = 0xEDF4FF;
 constexpr uint32_t kRowColorB = 0xDCE8FF;
+// 当前已连的那张网单独上色，扫一眼就知道现在挂在哪个网络上
+constexpr uint32_t kRowColorCurrent = 0xCCEEDC;
+constexpr uint32_t kCurrentTextColor = 0x0F7A55;
 
 
 
@@ -93,6 +96,16 @@ lv_point_t current_point()
         lv_indev_get_point(indev, &p);
     }
     return p;
+}
+
+/** 当前已连的 WiFi 名；未连接时返回空串。用于在配网页上标出「现在挂在谁身上」。 */
+std::string current_wifi_ssid()
+{
+    auto& wifi = WifiManager::GetInstance();
+    if (!wifi.IsConnected()) {
+        return std::string();
+    }
+    return wifi.GetSsid();
 }
 
 }  // namespace
@@ -668,27 +681,30 @@ void OnScreenWifiWorker::rebuild_rows()
         aps = _job->aps;
     }
 
+    // 当前挂在哪张网上：状态行直接写出来（配网页最常问的就是这个），
+    // 列表里那一行同时换底色，扫一眼就能对上。
+    const std::string current = current_wifi_ssid();
     if (_label_status) {
-        if (aps.empty()) {
-            _label_status->setText("未找到网络，点「重新扫描」");
-        } else {
-            _label_status->setText((std::to_string(aps.size()) + " 个网络").c_str());
-        }
+        std::string line = current.empty() ? "当前: 未连接" : ("当前: " + current);
+        line += aps.empty() ? "   未找到网络" : ("   " + std::to_string(aps.size()) + " 个网络");
+        _label_status->setText(line.c_str());
     }
 
     int y = 0;
     for (size_t i = 0; i < aps.size(); i++) {
+        const bool is_current = (!current.empty() && current == aps[i].ssid);
         auto btn = std::make_unique<Button>(_list->get());
         btn->setSize(292, 36);
         btn->align(LV_ALIGN_TOP_MID, 0, y);
-        btn->setBgColor(lv_color_hex((i % 2) ? kRowColorB : kRowColorA));
+        btn->setBgColor(lv_color_hex(is_current ? kRowColorCurrent
+                                                : ((i % 2) ? kRowColorB : kRowColorA)));
         btn->setBorderWidth(0);
         btn->setShadowWidth(0);
         btn->setRadius(8);
         btn->label().setTextFont(&mibao_zh_font_16);
-        btn->label().setTextColor(lv_color_hex(kTextColor));
+        btn->label().setTextColor(lv_color_hex(is_current ? kCurrentTextColor : kTextColor));
         btn->label().setText((aps[i].ssid + "   " + rssi_text(aps[i].rssi) + "dBm   " +
-                              (aps[i].secured ? "加密" : "开放"))
+                              (aps[i].secured ? "加密" : "开放") + (is_current ? "  已连" : ""))
                                  .c_str());
 
         const std::string ssid = aps[i].ssid;
