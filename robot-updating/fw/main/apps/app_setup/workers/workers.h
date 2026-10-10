@@ -221,6 +221,7 @@ private:
         None,
         ToScan,
         ToPassword,
+        ConnectSaved,  // 点的是已保存的网络：直接拿 NVS 里的密码连，不再问用户
         Connect,
         Hotspot,
         Finish,
@@ -241,6 +242,10 @@ private:
     std::uint32_t _last_scroll_ms = 0;
     std::string _sel_ssid;
     std::string _last_pwd;  // 失败重试时用（输入框会随页面销毁）
+    // 「已保存的网络不问密码」相关状态：
+    bool _using_saved_pwd = false;  // 本次连接用的是 NVS 里保存的密码
+    std::string _pwd_hint;          // 密码页的提示语（自动连接失败时说明原因）
+    std::string _prefill_pwd;       // 密码页预填上次用过的密码，方便改错字
 
     std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
     std::unique_ptr<uitk::lvgl_cpp::Label> _label_title;

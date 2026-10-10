@@ -368,6 +368,30 @@ void wifi_connect_task(void* arg)
 
 }  // namespace
 
+namespace {
+
+/** 这条网络是否已经存过凭据（存过就不再让用户重输密码，直接用）。 */
+bool ssid_is_saved(const std::string& ssid) {
+    for (const auto& item : SsidManager::GetInstance().GetSsidList()) {
+        if (item.ssid == ssid) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** 取已保存的密码；没有则返回空串。 */
+std::string saved_password_of(const std::string& ssid) {
+    for (const auto& item : SsidManager::GetInstance().GetSsidList()) {
+        if (item.ssid == ssid) {
+            return item.password;
+        }
+    }
+    return std::string();
+}
+
+}  // namespace
+
 // ==================== Worker ====================
 
 OnScreenWifiWorker::OnScreenWifiWorker()
@@ -536,6 +560,11 @@ void OnScreenWifiWorker::build_password_page()
     _ta_password->setTextFont(&lv_font_montserrat_16);
     _ta_password->setPlaceholderText("密码，开放网络留空");
     _ta_password->align(LV_ALIGN_TOP_MID, 0, 78);
+    // 自动连接失败退回来时预填上次的密码：桌面设备上能直接看见并改错字
+    if (!_prefill_pwd.empty()) {
+        lv_textarea_set_text(_ta_password->get(), _prefill_pwd.c_str());
+    }
+    _prefill_pwd.clear();
     // 密码不遮挡：桌面设备上看得见更不容易输错
     lv_obj_add_event_cb(
         _ta_password->get(),
@@ -550,10 +579,14 @@ void OnScreenWifiWorker::build_password_page()
         LV_EVENT_CLICKED, nullptr);
 
     _label_status = std::make_unique<Label>(_panel->get());
-    _label_status->setText("点输入框弹键盘，键盘 ✓ 收起");
+    // 默认提示；自动连接失败退回来时显示失败原因
+    _label_status->setText(_pwd_hint.empty() ? "点输入框弹键盘，键盘 ✓ 收起" : _pwd_hint.c_str());
     _label_status->setTextColor(lv_color_hex(kHintColor));
     _label_status->setTextFont(&mibao_zh_font_16);
+    _label_status->setTextAlign(LV_TEXT_ALIGN_CENTER);
+    _label_status->setWidth(292);
     _label_status->align(LV_ALIGN_TOP_MID, 0, 120);
+    _pwd_hint.clear();  // 只对这一次进入密码页生效
 
     _btn_back = std::make_unique<Button>(_panel->get());
     _btn_back->setSize(96, 32);
@@ -669,7 +702,9 @@ void OnScreenWifiWorker::rebuild_rows()
             mclog::tagInfo(_tag, "row clicked: {} ({}dBm)", ssid, rssi);
             // 不能在回调里切页（会删掉正在派发事件的这个按钮）
             _pending_ssid = ssid;
-            _pending      = Pending::ToPassword;
+            // 已保存过的网络直接用 NVS 里的密码连，不再每次都让用户重输；
+            // 只有连不上时才退回密码页让他重输（见 sync_from_job 的 Failed 分支）。
+            _pending = ssid_is_saved(ssid) ? Pending::ConnectSaved : Pending::ToPassword;
         });
         // 按钮级滑动判定
         lv_obj_add_event_cb(
@@ -758,7 +793,9 @@ void OnScreenWifiWorker::request_connect(const std::string& password)
     _connect_started = true;
     _connect_ok      = false;
     _page            = Page::Connecting;
-    build_status_page("正在连接…", _sel_ssid, false);
+    build_status_page("正在连接…",
+                      _sel_ssid + (_using_saved_pwd ? "（已保存密码）" : ""),
+                      false);
 
     if (g_keyboard != nullptr) {
         lv_obj_add_flag(g_keyboard, LV_OBJ_FLAG_HIDDEN);
@@ -821,7 +858,18 @@ void OnScreenWifiWorker::sync_from_job()
             _connect_ok   = false;
             _page         = Page::Result;
             _result_at_ms = GetHAL().millis();
-            build_status_page("连接失败", _sel_ssid + "\n" + _job->error, true);
+            if (_using_saved_pwd) {
+                // 用保存的密码没连上（多半是密码变了 / 换过密码）：
+                // 直接回到密码页让他重输，而不是只丢一句「连接失败」。
+                _prefill_pwd = _last_pwd;
+                _pwd_hint    = "连不上，请重新输入密码";
+                _page        = Page::Password;
+                _result_at_ms = 0;
+                mclog::tagInfo(_tag, "auto connect with saved password failed, ask user to retype");
+                build_password_page();
+            } else {
+                build_status_page("连接失败", _sel_ssid + "\n" + _job->error, true);
+            }
         }
     }
 }
@@ -856,11 +904,21 @@ void OnScreenWifiWorker::update()
                 break;
             case Pending::ToPassword:
                 mclog::tagInfo(_tag, "ui -> password page for {}", _pending_ssid);
-                _sel_ssid = _pending_ssid;
+                _sel_ssid        = _pending_ssid;
+                _using_saved_pwd = false;  // 用户手输，失败时走原有「连接失败」页
+                _pwd_hint.clear();
+                _prefill_pwd.clear();
                 build_password_page();
+                break;
+            case Pending::ConnectSaved:
+                mclog::tagInfo(_tag, "ui -> auto connect saved network {}", _pending_ssid);
+                _sel_ssid        = _pending_ssid;
+                _using_saved_pwd = true;
+                request_connect(saved_password_of(_sel_ssid));
                 break;
             case Pending::Connect:
                 mclog::tagInfo(_tag, "ui -> connect {} (pwd len {})", _sel_ssid, _pending_pwd.size());
+                _using_saved_pwd = false;  // 用户手输的密码，别标成「已保存密码」
                 request_connect(_pending_pwd);
                 break;
             case Pending::Hotspot:
