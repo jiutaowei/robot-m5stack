@@ -41,7 +41,11 @@ logger = setup_logging()
 
 DEFAULT_SECONDS = 5.0
 DEFAULT_TEXTS = ["稍等，我看一下。", "嗯，我查一下。"]
+DEFAULT_SECOND_SECONDS = 35.0
+DEFAULT_SECOND_TEXTS = ["还在整理，马上就好。", "再等我一下。"]
 _FUT_ATTR = "_latency_interim_future"
+_CANCELLED_ATTR = "_latency_interim_cancelled"
+_SPEAKING_ATTR = "_latency_interim_speaking"
 
 
 def _cfg(conn) -> Dict[str, Any]:
@@ -52,8 +56,8 @@ def _cfg(conn) -> Dict[str, Any]:
         return {}
 
 
-def _opts(conn) -> Optional[tuple]:
-    """返回 (seconds, texts)；关闭时返回 None。"""
+def _opts(conn) -> Optional[dict]:
+    """返回配置项；关闭时返回 None。"""
     cfg = _cfg(conn)
     if not cfg.get("enabled", True):
         return None
@@ -63,9 +67,20 @@ def _opts(conn) -> Optional[tuple]:
         seconds = DEFAULT_SECONDS
     if seconds <= 0:
         return None
+    try:
+        second = float(cfg.get("second_seconds", DEFAULT_SECOND_SECONDS) or 0)
+    except (TypeError, ValueError):
+        second = DEFAULT_SECOND_SECONDS
     raw = cfg.get("texts")
     texts = [str(t).strip() for t in raw if str(t).strip()] if isinstance(raw, (list, tuple)) else []
-    return seconds, (texts or DEFAULT_TEXTS)
+    raw2 = cfg.get("second_texts")
+    texts2 = [str(t).strip() for t in raw2 if str(t).strip()] if isinstance(raw2, (list, tuple)) else []
+    return {
+        "seconds": seconds,
+        "second_seconds": second if second > seconds else 0.0,
+        "texts": texts or DEFAULT_TEXTS,
+        "second_texts": texts2 or DEFAULT_SECOND_TEXTS,
+    }
 
 
 def _submit(conn, coro):
@@ -84,7 +99,22 @@ def _submit(conn, coro):
 
 
 def cancel(conn) -> None:
-    """撤销本次垫话（幂等；LLM 一出字、或任何一方开始说话就调它）。"""
+    """撤销本次垫话（幂等；LLM 一出字、或任何一方开始说话就调它）。
+
+    ⚠️ 两个易错点：
+    1. 我们**自己**说垫话时会走 `send_tts_message`，那里也会调 cancel —— 若此时把
+       任务取消掉，就等于"自己把自己掐断"（音频可能入不了队）。所以"正在垫话"期间
+       直接忽略 cancel。
+    2. 但不能像早期版本那样把句柄清空来躲掉 1 —— 那样第二级垫话就**再也取消不了**了
+       （实测踩过：LLM 已经出字，第二级"还在整理"还是说了出去）。因此用
+       `_CANCELLED_ATTR` 标记 + 协程在每一级前自检。
+    """
+    if getattr(conn, _SPEAKING_ATTR, False):
+        return
+    try:
+        setattr(conn, _CANCELLED_ATTR, True)
+    except Exception:
+        pass
     fut = getattr(conn, _FUT_ATTR, None)
     if fut is None:
         return
@@ -100,6 +130,10 @@ def cancel(conn) -> None:
         pass
 
 
+def _is_cancelled(conn) -> bool:
+    return bool(getattr(conn, _CANCELLED_ATTR, False))
+
+
 def start(conn, depth: int = 0, user_turn: bool = True) -> None:
     """开始计时。
 
@@ -109,35 +143,56 @@ def start(conn, depth: int = 0, user_turn: bool = True) -> None:
     cancel(conn)                      # 新一轮先清掉上一轮遗留的
     if depth != 0 or not user_turn:
         return
+    try:
+        setattr(conn, _CANCELLED_ATTR, False)      # 新一轮：复位取消标记
+    except Exception:
+        pass
     opts = _opts(conn)
     if not opts:
         return
-    seconds, texts = opts
     try:
-        fut = _submit(conn, _wait_and_speak(conn, seconds, texts))
+        fut = _submit(conn, _wait_and_speak(conn, opts))
         if fut is not None:
             setattr(conn, _FUT_ATTR, fut)
     except Exception as exc:
         logger.bind(tag=TAG).warning(f"决策期垫话启动失败：{exc}")
 
 
-async def _wait_and_speak(conn, seconds: float, texts) -> None:
+async def _wait_and_speak(conn, opts: dict) -> None:
     started = time.time()
+    spoken = 0
     try:
-        await asyncio.sleep(seconds)
-        if getattr(conn, "client_abort", False):
+        await asyncio.sleep(opts["seconds"])
+        if _is_cancelled(conn):
             return
-        if getattr(conn, "client_have_voice", False):
-            return                    # 用户正在说话，别插嘴
-        text = random.choice(texts)
-        await _speak(conn, text)
-        logger.bind(tag=TAG).info(
-            f"决策期垫话：LLM {time.time() - started:.1f}s 未出字，已垫「{text}」"
-        )
+        spoken += await _maybe_speak(conn, opts["texts"], started, spoken)
+        # 第二级：平台首字可能要几十秒（实测 2026-10-08 下半天 68~71 秒），
+        # 只垫一句的话用户还要再干等一分钟。
+        if opts.get("second_seconds", 0) > opts["seconds"]:
+            await asyncio.sleep(opts["second_seconds"] - opts["seconds"])
+            if _is_cancelled(conn):
+                return
+            spoken += await _maybe_speak(conn, opts["second_texts"], started, spoken)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         logger.bind(tag=TAG).warning(f"决策期垫话失败：{exc}")
+
+
+async def _maybe_speak(conn, texts, started: float, spoken: int) -> int:
+    """该开口时才开口：已被打断/用户正在说话就跳过。返回实际说了几句(0/1)。"""
+    if _is_cancelled(conn):
+        return 0
+    if getattr(conn, "client_abort", False):
+        return 0
+    if getattr(conn, "client_have_voice", False):
+        return 0                    # 用户正在说话，别插嘴
+    text = random.choice(texts)
+    await _speak(conn, text)
+    logger.bind(tag=TAG).info(
+        f"决策期垫话（第{spoken + 1}句）：LLM {time.time() - started:.1f}s 未出字，已垫「{text}」"
+    )
+    return 1
 
 
 def _enqueue_tts(conn, text: str) -> None:
@@ -157,10 +212,11 @@ def _enqueue_tts(conn, text: str) -> None:
 
 
 async def _speak(conn, text: str) -> None:
-    # 先摘掉句柄：下面 send_tts_message 会调 cancel()，否则它会把"正在执行这句话的
-    # 自己"取消掉（cancel() 在下一个 await 点生效，音频可能入不了队）。
+    # 置"正在垫话"标志：下面 send_tts_message 会调 cancel()，而 cancel() 见该标志会
+    # 直接忽略（否则等于自己把自己掐断，音频可能入不了队）。
+    # 注意**不能**像早期版本那样清空句柄来躲——那样第二级垫话就取消不掉了。
     try:
-        setattr(conn, _FUT_ATTR, None)
+        setattr(conn, _SPEAKING_ATTR, True)
     except Exception:
         pass
     try:
@@ -170,4 +226,9 @@ async def _speak(conn, text: str) -> None:
         conn.client_is_speaking = True
     except Exception as exc:
         logger.bind(tag=TAG).warning(f"垫话前发送 tts start 失败：{exc}")
+    finally:
+        try:
+            setattr(conn, _SPEAKING_ATTR, False)
+        except Exception:
+            pass
     await asyncio.to_thread(_enqueue_tts, conn, text)

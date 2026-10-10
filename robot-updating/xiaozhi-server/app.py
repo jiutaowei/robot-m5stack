@@ -45,7 +45,18 @@ async def monitor_stdin():
 
 
 async def main():
-    check_ffmpeg_installed()
+    # ffmpeg 只在少数路径用到（本地音频文件播放/格式转换，见 core/utils/util.py 的
+    # AudioSegment 相关函数）。便携版（米宝服务端.exe）默认不带 ffmpeg，用
+    # MIBAO_ALLOW_NO_FFMPEG=1 允许缺省启动并给出提示；开发环境保持原样直接报错。
+    try:
+        check_ffmpeg_installed()
+    except Exception as exc:
+        if os.environ.get("MIBAO_ALLOW_NO_FFMPEG") == "1":
+            print(f"[警告] 未检测到 ffmpeg（{exc}）")
+            print("       语音对话不受影响；仅在播放本地音频文件等少数功能上需要。")
+            print("       需要时把 ffmpeg.exe 放进 tools\\ffmpeg\\ 再重启本程序即可。")
+        else:
+            raise
     config = await load_config()
 
     # auth_key优先级：配置文件server.auth_key > manager-api.secret > 自动生成

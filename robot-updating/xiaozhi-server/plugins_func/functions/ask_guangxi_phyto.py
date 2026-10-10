@@ -194,12 +194,12 @@ DEFAULT_PLUGIN_CONFIG: Dict[str, Any] = {
     # 数据查询实测 11~308 秒；只在开头播一句"正在查询"会让用户干等几分钟。
     # 这里按时间分级播报，让等待"有反馈"。文案刻意不带技术细节，到点后择机播。
     "progress_enabled": True,
-    # 2026-10-08 实测：成功的查询 85s，卡死的查询能拖满 360s。等待语收敛成 3 句，
-    # 最后一句是"终止式"（不再反复说"还在查"，避免用户听到一长串等待语）。
+    # 2026-10-08 实测：成功 85s / 卡死 360s。等待语收敛成 3 句（用**整次查询**的时间轴，
+    # 卡死重试不会重播，否则用户会听到"一直在让稍等"）。
     "progress_messages": [
-        {"at": 20, "text": "数据还在查，我盯着呢，稍等一下。"},
-        {"at": 60, "text": "这份省级植保数据一般要一分钟左右，您稍等。"},
-        {"at": 150, "text": "还在查，这次后台比较慢；一有结果我马上告诉您。"},
+        {"at": 25, "text": "数据还在查，我盯着呢，稍等一下。"},
+        {"at": 90, "text": "这份省级植保数据一般要一分钟左右，您稍等。"},
+        {"at": 200, "text": "还在查，这次后台比较慢；一有结果我马上告诉您。"},
     ],
     "progress_min_gap_seconds": 15.0,      # 两条进度之间的最小间隔，防串话
     "progress_quiet_wait_seconds": 6.0,    # 每次播报前最多等这么久让用户说完
@@ -210,19 +210,35 @@ DEFAULT_PLUGIN_CONFIG: Dict[str, Any] = {
     "query_deadline_seconds": 360,
     # 超过这个时长才返回，播报时改口"不好意思久等了"
     "late_announce_seconds": 90,
-    # ── 卡死早停 + 换会话重试（2026-10-08）──────────────────────────────
-    # 实测平台会进"工具调用死循环"：一次 360 秒里 tool_call=22、thinking=10360、
-    # **一个字都没吐**；而同一句话成功时 85 秒就出正文（7.4 秒就有输出）。
-    # 所以判据是"长时间零输出"，不是"慢"：到点中止，并用**新会话**重试一次
-    # （新会话大概率不进那个循环）。tool_call 次数爆掉也按卡死处理。
-    "stall_no_output_seconds": 150,
-    "stall_max_tool_calls": 25,          # 0 = 关闭该判据
+    # ── 卡死早停 + 换会话重试（2026-10-08 两次修正，见下）────────────────
+    # 实测三组对照（同一句话）：
+    #   成功 85s ：首字 7.43s，text片=319，tool_call=18，thinking=1874
+    #   失败 360s：首字 0，    text片=0，  tool_call=22，thinking=10360（平台内部死循环）
+    #   失败 360s：首字 150.2s，text片=96，tool_call=20，thinking=1676（吐了叙述但没答案）
+    # 结论：**tool_call 次数不能区分好坏**（18/20/22 几乎一样），真正能区分的是
+    # "多久没有新文本"。因此判据 = 距上次收到文本超过 stall_no_output_seconds。
+    # 阈值取 130s：健康的长查询（实测一次成功耗时 308s）文本间隔最大 117s，仍能存活。
+    "stall_no_output_seconds": 130,
+    "stall_max_tool_calls": 0,           # 已证实无区分度，默认关闭
     "retry_on_stall": 1,                 # 卡死后的重试次数
     # ── 短时结果缓存（2026-10-08）──────────────────────────────────────
-    # 省级周报一周才更新一次；同一问题短时间内重复问很常见（实测一天问了 5 次同一句）。
+    # 省级周报一周才更新一次；同一问题短时间内重复问很常见（实测一天问了 6 次同一句）。
     # 命中缓存直接播报：不查平台、不花额度、秒回。0 = 关闭。
-    "result_cache_seconds": 600,
+    # 2026-10-08 下半天平台严重退化（连常识问答都要 71s 才吐首字），于是把新鲜期拉长到 2 小时。
+    "result_cache_seconds": 7200,
     "cache_hit_prefix": "刚才查过了，",
+    # 过期缓存的"兜底播报"：平台卡住/超时时，用同一问题的**上次成功结果**作答，
+    # 并明确告诉用户这是上次查到的（比"查不到"有用得多）。0 = 关闭。
+    "stale_fallback_seconds": 86400,
+    "stale_prefix": "后台数据服务这会儿不稳，我先说上次查到的：",
+    # ── 平台连续失败时的熔断（2026-10-08）────────────────────────────────
+    # 平台故障时每次查询会"卡住→换会话重试→再卡住"，白等 4~5 分钟还白花 2 次额度。
+    # 连续 N 次**硬失败**（卡住/超时/报错）后进入冷却，期间直接告诉用户稍后再问，
+    # 不再发起请求；任何一次成功即清零。
+    "failure_streak_threshold": 2,
+    "failure_cooldown_seconds": 300,
+    "breaker_message": "后台数据服务这会儿不太稳定，我先不重复试了，过几分钟再问我好吗？",
+    "async_fail_prefix": "",          # 失败/无数据时的开场白（不能用"数据回来了"）
     "model": "",                                # 可选：指定模型，留空由服务端决策
     "kb_ids": [],                               # 可选：限定知识库 ID
 }
@@ -702,9 +718,11 @@ class _QueryState:
 
     def __init__(self, question: str = "") -> None:
         self.question = question
-        self.started = time.time()
+        self.started = time.time()               # 当前尝试的起点（看门狗用）
+        self.query_started = time.time()         # 整次查询的起点（进度播报用，**不随重试重置**）
         self.first_text_at = 0.0
         self.first_text_at_abs = 0.0     # 绝对时间戳，供埋点在拿不到 stats 时回退
+        self.last_text_at = 0.0          # 最近一次收到非空文本的时刻（卡死判据）
         self.answer_head = ""            # 累积开头若干字，用于判断"答案正文是否开始"
         self.attempts = 0
         self.text_events = 0
@@ -740,9 +758,11 @@ class _QueryState:
                 if not piece or not str(piece).strip():
                     return          # 空/纯空白 text 不算"首字"，否则进度播报会提前停
                 self.text_events += 1
+                now = time.time()
                 if not self.first_text_at:
-                    self.first_text_at = time.time()
-                    self.first_text_at_abs = time.time()
+                    self.first_text_at = now
+                    self.first_text_at_abs = now
+                self.last_text_at = now
                 if len(self.answer_head) < 900:
                     self.answer_head += str(piece)
             elif etype == "thinking":
@@ -911,7 +931,9 @@ async def _progress_loop(conn, cfg: Dict[str, Any], stop: "asyncio.Event", state
         if not _conn_alive(conn):        # 连接没了就别再播报
             logger.bind(tag=TAG).info("连接已关闭，进度播报停止")
             break
-        elapsed = state.elapsed()
+        # 用**整次查询**的时间轴（不随重试重置）：否则卡死重试后会把
+        # "还在查/请稍等"从头再播一遍，用户听到的就是"一直在让稍等"。
+        elapsed = time.time() - state.query_started
         item = schedule[idx]
         if elapsed < item["at"]:
             await _sleep(min(1.0, item["at"] - elapsed))
@@ -936,7 +958,9 @@ async def _progress_loop(conn, cfg: Dict[str, Any], stop: "asyncio.Event", state
             last_said = time.time()
             idx += 1                     # 只有真正播出去才前进
             logger.bind(tag=TAG).info(
-                f"进度播报({state.elapsed():.0f}s)：{item['text']}｜{state.summary()}"
+                # 标"整次查询"的秒数：重试期间 per-attempt 的 elapsed 会跳回 0，看起来像 bug
+                f"进度播报({time.time() - state.query_started:.0f}s)：{item['text']}｜"
+                f"{state.summary()}"
             )
         except asyncio.CancelledError:
             raise
@@ -952,22 +976,58 @@ async def _progress_loop(conn, cfg: Dict[str, Any], stop: "asyncio.Event", state
 # ---------------------------------------------------------------------------
 
 
+# 平台连续失败熔断（进程级：同一账号被所有会话共用）
+_fail_streak = 0
+_cooldown_until = 0.0
+
+
+def _breaker_remaining(cfg: Dict[str, Any]) -> float:
+    """返回熔断剩余冷却秒数（0 = 未熔断）。"""
+    if _cfg_float(cfg, "failure_cooldown_seconds", 300.0) <= 0:
+        return 0.0
+    return max(0.0, _cooldown_until - time.time())
+
+
+def _breaker_record(hard_fail: bool, cfg: Dict[str, Any]) -> None:
+    """记录一次查询结果：成功的查询清零；硬失败累加，达到阈值就开冷却。"""
+    global _fail_streak, _cooldown_until
+    if not hard_fail:
+        _fail_streak = 0
+        _cooldown_until = 0.0
+        return
+    _fail_streak += 1
+    try:
+        threshold = int(cfg.get("failure_streak_threshold", 2) or 0)
+    except (TypeError, ValueError):
+        threshold = 2
+    cooldown = _cfg_float(cfg, "failure_cooldown_seconds", 300.0)
+    if threshold > 0 and _fail_streak >= threshold and cooldown > 0:
+        _cooldown_until = time.time() + cooldown
+        logger.bind(tag=TAG).warning(
+            f"平台连续硬失败 {_fail_streak} 次，熔断 {cooldown:.0f} 秒（期间不再发起查询）"
+        )
+
+
 async def _stall_watchdog(state: _QueryState, stall_seconds: float, max_tool_calls: int = 0,
                           poll: float = 2.0) -> str:
-    """判断"平台卡死了"：长时间**零正文输出**，或工具调用次数爆掉。
+    """判断"平台是不是卡住了"：**距上次收到文本**超过阈值就算卡住。
 
-    实测（2026-10-08 同一句话两次）：
-      成功：7.4 秒就出正文，85 秒返回（tool_call=18、thinking=1874）
-      卡死：360 秒 text片=0（tool_call=22、thinking=10360）—— 平台在内部循环，永不产出
-    因此判据是"零输出"，不是"慢"；有输出就一直等（实测最慢一次首字 77 秒）。
+    判据的来历（2026-10-08 三组实测，同一句话）：
+      成功 85s ：首字 7.4s，text片=319，tool_call=18
+      失败 360s：首字 0，   text片=0，  tool_call=22、thinking=10360（内部死循环）
+      失败 360s：首字 150s，text片=96，tool_call=20、thinking=1676（吐了叙述但没答案）
+    可见 tool_call 次数**毫无区分度**（18/20/22），而"多久没有新文本"能区分：
+    健康长查询（实测一次成功用 308s）文本间隔最大 117s；卡住的则再也不产出。
+
+    ⚠️ 第一版判据是"一直没有任何 text 就判卡死"，被上面第三组打穿：平台 150.2 秒才
+    吐第一个字，而阈值正好 150 秒，轮询时差 0.2 秒判成 alive → 一路干等到 360 秒。
     """
     while True:
         await asyncio.sleep(poll)
-        if state.first_text_at:
-            return "alive"
-        if max_tool_calls and state.tool_calls >= max_tool_calls:
+        last_output = state.last_text_at or state.started
+        if time.time() - last_output >= stall_seconds:
             return "stall"
-        if state.elapsed() >= stall_seconds:
+        if max_tool_calls and state.tool_calls >= max_tool_calls:
             return "stall"
 
 
@@ -999,7 +1059,7 @@ def _cache_get(question: str, cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _cache_put(question: str, result: Dict[str, Any], cfg: Dict[str, Any]) -> None:
-    ttl = _cfg_float(cfg, "result_cache_seconds", 600.0)
+    ttl = _cfg_float(cfg, "result_cache_seconds", 7200.0)
     if ttl <= 0 or not (result or {}).get("text"):
         return
     if len(_result_cache) >= _CACHE_MAX:
@@ -1011,6 +1071,81 @@ def _cache_put(question: str, result: Dict[str, Any], cfg: Dict[str, Any]) -> No
         "text": result.get("text", ""),
         "conversation_id": result.get("conversation_id", ""),
     })
+    _cache_save()
+
+
+# 测试用：把缓存落盘重定向到临时文件（**不能**改 SERVER_ROOT —— 那会把私钥的
+# 相对路径 .keys/private_key.pem 一起改掉，签名直接失败）
+_CACHE_FILE_OVERRIDE = ""
+
+
+def _cache_path() -> str:
+    return _CACHE_FILE_OVERRIDE or os.path.join(SERVER_ROOT, "tmp", "phyto_cache.json")
+
+
+def _cache_load() -> None:
+    """从 tmp/phyto_cache.json 恢复缓存。
+
+    进程内缓存一重启就没了，而平台故障时"上次结果兜底"恰恰最需要它 → 必须落盘。
+    """
+    try:
+        with open(_cache_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return
+    except Exception as exc:
+        logger.bind(tag=TAG).warning(f"结果缓存加载失败（忽略）：{exc}")
+        return
+    entries = (data or {}).get("entries") or {}
+    loaded = 0
+    for k, v in entries.items():
+        try:
+            ts, payload = float(v[0]), v[1]
+            if isinstance(payload, dict) and payload.get("text"):
+                _result_cache[k] = (ts, payload)
+                loaded += 1
+        except Exception:
+            continue
+    if loaded:
+        logger.bind(tag=TAG).info(f"结果缓存已恢复 {loaded} 条（重启后仍可兜底）")
+
+
+def _cache_save() -> None:
+    try:
+        path = _cache_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"entries": {k: [ts, v] for k, (ts, v) in _result_cache.items()}},
+                      fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception as exc:
+        logger.bind(tag=TAG).warning(f"结果缓存落盘失败（忽略）：{exc}")
+
+
+_cache_load()
+
+
+def _cache_stale_get(question: str, cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """取"过期但仍可用"的上次结果（平台硬失败时用来兜底）。
+
+    只认**同一个问题**（归一化后相同），所以不会答非所问。
+    """
+    limit = _cfg_float(cfg, "stale_fallback_seconds", 86400.0)
+    if limit <= 0:
+        return None
+    key = _cache_key(question)
+    item = _result_cache.get(key)
+    if not item:
+        return None
+    ts, payload = item
+    age = time.time() - ts
+    fresh = _cfg_float(cfg, "result_cache_seconds", 7200.0)
+    if fresh > 0 and age <= fresh:
+        return None                      # 还没过期 → 走正常的缓存命中路径
+    if age <= limit:
+        return dict(payload, _age_seconds=age)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1120,13 +1255,31 @@ def _humanize_error(err: str) -> str:
     return err[:40]
 
 
+_NARRATION_HINTS = (
+    "已确认查询参数", "现在开始获取", "开始获取监测数据", "已定位到", "我来处理您的请求",
+    "加载查询规则", "加载规则", "正在加载", "让我按", "按输出规范", "开始查询",
+    "已获取到有效数据", "我去查询", "查询规则",
+)
+
+
 def _is_non_answer(text: str) -> bool:
+    """判断"这不是一份数据答案"。
+
+    ⚠️ 2026-10-08 14:45 实测教训：平台有时会**正常结束**却只抛出工作过程叙述
+    （282.8 秒"成功"返回的正文就是「已确认查询参数：地区为广西…现在开始获取监测数据。」
+    —— 因为里面有日期数字，长度也 >40，旧判据放行了，机器人就把 agent 的内心独白
+    当数据念了出来）。因此：**没有结构化答案头 + 含过程叙述特征词 = 非答案**。
+    """
     t = (text or "").strip()
     if not t:
         return True
     if any(p in t for p in _ASK_HINTS):
         return False
     if any(p in t for p in _APOLOGY_HINTS):
+        return True
+    # 结构化答案头（`## 标题` 或表格行）是"真的有答案"的标志；没有它且带过程叙述特征
+    # → 判为非答案，交给重试/兜底话术，绝不把过程叙述念给用户。
+    if not ANSWER_START_RE.search(t) and any(p in t for p in _NARRATION_HINTS):
         return True
     if len(t) < 40 and not _has_digit(t):
         return True
@@ -1430,7 +1583,9 @@ async def _run_async_query(conn, cfg, question: str, session_id: str, key: str) 
             stall_n = int(cfg.get("retry_on_stall", 1) or 0)
         except (TypeError, ValueError):
             stall_n = 1
-        stall_s = _cfg_float(cfg, "stall_no_output_seconds", 150.0)
+        stall_s = _cfg_float(cfg, "stall_no_output_seconds", 130.0)
+        if stall_s <= 0:
+            stall_s = 0.0        # 0/负数 = 关闭卡死判据（不能当成"阈值 0 秒→立刻卡死"）
         try:
             stall_calls = int(cfg.get("stall_max_tool_calls", 25) or 0)
         except (TypeError, ValueError):
@@ -1442,60 +1597,55 @@ async def _run_async_query(conn, cfg, question: str, session_id: str, key: str) 
         async def _call_once(conv: str, budget: float) -> Dict[str, Any]:
             """一次真实请求：与"卡死看门狗"竞速，谁先结束听谁的。
 
-            ⚠️ 看门狗返回的是**判定结果**（alive/stall），不是"请求结束"：
-            首字一到它就返回 alive —— 这时必须**继续等请求**，不能当成卡死
-            （否则每次正常查询都会被误判，实测踩过这个坑）。
+            ⚠️ 看门狗返回的是**判定结果**（stall），不是"请求结束"：
+            请求正常完成时走 `call in done` 分支；stall_s <= 0 表示关闭看门狗。
             """
             budget_deadline = (time.time() + budget) if budget > 0 else None
             call = asyncio.ensure_future(
                 widget_chat(cfg, question, conv, on_event=state.on_event))
-            watch = asyncio.ensure_future(_stall_watchdog(state, stall_s, stall_calls))
+            watch = (asyncio.ensure_future(_stall_watchdog(state, stall_s, stall_calls))
+                     if stall_s > 0 else None)
 
             async def _cancel_all() -> None:
                 for _t in (call, watch):
-                    if not _t.done():
+                    if _t is not None and not _t.done():
                         _t.cancel()
-                await asyncio.gather(call, watch, return_exceptions=True)
+                await asyncio.gather(*[t for t in (call, watch) if t is not None],
+                                     return_exceptions=True)
 
             def _timeout_result() -> Dict[str, Any]:
                 return {"ok": False, "text": "", "conversation_id": "", "timed_out": True,
                         "error": f"查询超过 {deadline:.0f} 秒还没有返回", "stats": {}}
 
             try:
-                while True:
-                    remaining = (None if budget_deadline is None
-                                 else max(0.0, budget_deadline - time.time()))
-                    done, _pending = await asyncio.wait(
-                        {call, watch}, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
+                remaining = (None if budget_deadline is None
+                             else max(0.0, budget_deadline - time.time()))
 
-                    if call in done:                      # 请求先结束 → 用它的结果
-                        watch.cancel()
-                        await asyncio.gather(watch, return_exceptions=True)
-                        return call.result()
+                if watch is None:                     # 卡死判据已关闭：只等请求本身
+                    if remaining is None:
+                        return await call
+                    try:
+                        return await asyncio.wait_for(call, timeout=remaining)
+                    except asyncio.TimeoutError:
+                        await _cancel_all()
+                        return _timeout_result()
 
-                    if watch in done:                     # 看门狗先给判定
-                        verdict = watch.result()
-                        if verdict == "stall":
-                            await _cancel_all()
-                            return {"ok": False, "text": "", "conversation_id": "",
-                                    "stalled": True,
-                                    "error": f"平台 {stall_s:.0f} 秒没有任何输出"
-                                             f"（疑似工具调用死循环）",
-                                    "stats": {}}
-                        # alive：已有正文，撤掉看门狗，安心把预算用完
-                        watch.cancel()
-                        await asyncio.gather(watch, return_exceptions=True)
-                        if budget_deadline is None:
-                            return await call
-                        rest = max(0.1, budget_deadline - time.time())
-                        try:
-                            return await asyncio.wait_for(call, timeout=rest)
-                        except asyncio.TimeoutError:
-                            await _cancel_all()
-                            return _timeout_result()
+                done, _pending = await asyncio.wait(
+                    {call, watch}, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
 
-                    await _cancel_all()                   # 预算用尽
-                    return _timeout_result()
+                if call in done:                      # 请求先结束 → 用它的结果
+                    watch.cancel()
+                    await asyncio.gather(watch, return_exceptions=True)
+                    return call.result()
+
+                if watch in done:                     # 看门狗判定：距上次文本太久 → 卡住
+                    await _cancel_all()
+                    return {"ok": False, "text": "", "conversation_id": "", "stalled": True,
+                            "error": f"平台 {stall_s:.0f} 秒没有任何新输出（疑似卡住）",
+                            "stats": {}}
+
+                await _cancel_all()                   # 预算用尽
+                return _timeout_result()
             except asyncio.CancelledError:
                 await _cancel_all()
                 raise
@@ -1524,13 +1674,20 @@ async def _run_async_query(conn, cfg, question: str, session_id: str, key: str) 
             result = await _call_once(conv, budget)
             _set_conv_id(session_id, result.get("conversation_id", ""))
 
-            # ① 卡死：长时间零输出 → 换新会话重试（新会话大概率不进那个内部循环）
+            # ① 卡死：长时间没有新输出 → 换新会话重试（新会话大概率不进那个内部循环）
+            #    但若**同一问题已有上次结果可兜底**，就不必再等一轮（直接快速给上次的数据）
             if result.get("stalled") and stall_left > 0:
+                if _cache_stale_get(question, cfg):
+                    logger.bind(tag=TAG).warning(
+                        "判为平台卡住，但本地有该问题的上次结果 → 不再重试，直接兜底播报"
+                    )
+                    break
                 stall_left -= 1
                 _set_conv_id(session_id, "")     # 丢掉这次会话，下次不带 conversationId
                 logger.bind(tag=TAG).warning(
-                    f"判为平台卡死（{stall_s:.0f}s 零输出，tool_call={state.tool_calls}、"
-                    f"thinking={state.thinking_events}），换新会话重试｜{state.summary()}"
+                    f"判为平台卡住（距上次输出 {stall_s:.0f}s，text片={state.text_events}、"
+                    f"tool_call={state.tool_calls}、thinking={state.thinking_events}），"
+                    f"换新会话重试｜{state.summary()}"
                 )
                 continue
             if result.get("stalled"):
@@ -1574,6 +1731,11 @@ async def _run_async_query(conn, cfg, question: str, session_id: str, key: str) 
         if usable:
             _cache_put(question, result, cfg)
 
+        # 熔断计数：只有"平台级硬失败"才算（卡住/超时/报错）；
+        # 平台正常回了"暂无数据"属于查询成功，不能算失败。
+        _breaker_record(bool(result.get("stalled") or result.get("timed_out")
+                             or result.get("error")), cfg)
+
         wait_s = _cfg_float(cfg, "async_speak_wait_seconds", 30.0)
         waited = time.time() - overall_start
         prefix = str(cfg.get("async_prefix") or "").strip()
@@ -1595,6 +1757,25 @@ async def _run_async_query(conn, cfg, question: str, session_id: str, key: str) 
                 logger.bind(tag=TAG).warning("播报后 client_abort 又为真，本次播报可能未出声")
             logger.bind(tag=TAG).info(f"异步播报：{say[:100]}")
         else:
+            # 平台硬失败（卡住/超时/报错）时：若同一问题有"过期但仍在兜底期"的上次成功结果，
+            # 就用它作答并说明是上次的 —— 比只说"查不到"有用得多（平台故障期尤其如此）。
+            stale = None
+            if result.get("stalled") or result.get("timed_out") or result.get("error"):
+                stale = _cache_stale_get(question, cfg)
+            if stale:
+                stale_prefix = str(cfg.get("stale_prefix") or "").strip()
+                body = _spoken_summary(stale.get("text", ""), cfg)
+                say = f"{stale_prefix}{body}" if stale_prefix else body
+                await _wait_until_quiet(conn, min(wait_s, 10.0))
+                _clear_stale_abort(conn)
+                await _announce_serialized(conn, sess_key, say)
+                logger.bind(tag=TAG).warning(
+                    f"平台硬失败，改用 {stale.get('_age_seconds', 0) / 60:.0f} 分钟前的"
+                    f"上次结果兜底播报：{say[:80]}"
+                )
+                return
+            # 失败/无数据时**不能**用"数据回来了"这个开场白（会自相矛盾：数据回来了却查不到）
+            prefix = str(cfg.get("async_fail_prefix") or "").strip()
             reason = (result.get("error") or result.get("text") or "没查到").strip()[:60]
             err = (result.get("error") or "").strip()
             if result.get("stalled"):
@@ -1945,6 +2126,16 @@ async def ask_guangxi_phyto(conn: "ConnectionHandler", question: str = ""):
             f"命中 {_cfg_float(cfg, 'result_cache_seconds', 600.0):.0f}s 结果缓存，直接播报：{say[:60]}"
         )
         return ActionResponse(Action.RESPONSE, None, say)
+
+    # ── 熔断：平台连续硬失败期间不再发起查询（避免每次都白等 4~5 分钟 + 白花 2 次额度）──
+    breaker_left = _breaker_remaining(cfg)
+    if breaker_left > 0:
+        msg = str(cfg.get("breaker_message")
+                  or "后台数据服务这会儿不太稳定，过几分钟再问我好吗？")
+        logger.bind(tag=TAG).warning(
+            f"熔断中（连续失败 {_fail_streak} 次，剩余 {breaker_left:.0f}s），本次不发起查询"
+        )
+        return ActionResponse(Action.RESPONSE, None, msg)
 
     # ── 异步模式：立刻回一句，后台查，查到主动说 ────────────────────────
     # 好处：查询期间用户能继续聊别的；插话不再作废这一轮；

@@ -31,10 +31,14 @@ show_tool_name_on_device: false
 # 大模型一出字（或任何一方开始说话）自动撤销。垫话不写对话历史，不影响工具调用配对。
 latency_interim:
   enabled: true
-  seconds: 5.0            # 设小更敏捷，但正常闲聊（1~3 秒）也会被垫话
+  seconds: 8.0            # 实测 ack 覆盖 ~5-6s；设 8s 只兜长尾，避免和 ack 重复垫话
   texts:
     - "稍等，我看一下。"
     - "嗯，我查一下。"
+  second_seconds: 35.0            # 第二级：平台首字实测要 68~71 秒，只垫一句不够
+  second_texts:
+    - "还在整理，马上就好。"
+    - "再等我一下。"
 
 selected_module:
   ASR: Qwen3ASRFlash
@@ -156,9 +160,9 @@ plugins:
     # 文案刻意不带技术细节；设 progress_enabled: false 可整体关闭。
     progress_enabled: true
     progress_messages:
-      - { at: 20,  text: "数据还在查，我盯着呢，稍等一下。" }
-      - { at: 60,  text: "这份省级植保数据一般要一分钟左右，您稍等。" }
-      - { at: 150, text: "还在查，这次后台比较慢；一有结果我马上告诉您。" }
+      - { at: 25,  text: "数据还在查，我盯着呢，稍等一下。" }
+      - { at: 90,  text: "这份省级植保数据一般要一分钟左右，您稍等。" }
+      - { at: 200, text: "还在查，这次后台比较慢；一有结果我马上告诉您。" }
     progress_min_gap_seconds: 15      # 两条进度之间最小间隔，防串话
     progress_quiet_wait_seconds: 6    # 每次播报前最多等这么久让用户说完
     # ── 有界等待（避免无限等）──────────────────────────────────────
@@ -172,13 +176,22 @@ plugins:
     # ── 卡死早停 + 换会话重试 ─────────────────────────────────────────
     # 平台会进"工具调用死循环"（实测 360s 零输出），此时早停并换新会话重试，
     # 比干等 6 分钟更可能拿到数据。判据是"长时间零输出"，不是"慢"。
-    stall_no_output_seconds: 150
-    stall_max_tool_calls: 25          # 0=关闭该判据
+    stall_no_output_seconds: 130
+    stall_max_tool_calls: 0           # 已证实无区分度，默认关闭
     retry_on_stall: 1
     # ── 短时结果缓存 ──────────────────────────────────────────────────
     # 省级周报一周才更新；同一问题短时间内重复问 → 直接播报，不查平台、不花额度。
-    result_cache_seconds: 600         # 0=关闭
+    result_cache_seconds: 7200         # 0=关闭
     cache_hit_prefix: "刚才查过了，"
+    stale_fallback_seconds: 86400   # 平台卡住/超时时用同一问题的上次结果兜底（0=关闭）
+    stale_prefix: "后台数据服务这会儿不稳，我先说上次查到的："
+    # ── 平台连续失败熔断 ────────────────────────────────────────────────
+    # 连续 N 次硬失败（卡住/超时/报错）后冷却，期间不再发请求；
+    # 平台正常回"暂无数据"算成功，不触发。
+    failure_streak_threshold: 2
+    failure_cooldown_seconds: 300
+    breaker_message: "后台数据服务这会儿不太稳定，我先不重复试了，过几分钟再问我好吗？"
+    async_fail_prefix: ""
     # ── 播报要求：附在查询原文前交给机器人的大模型，约束它"只播报要点、不念表格"。
     #    ⚠️ 只在**阻塞模式**（async_mode: false）生效：异步模式由确定性的
     #    _spoken_summary() 生成播报，不经过大模型，因此 speak_hint / max_answer_chars
