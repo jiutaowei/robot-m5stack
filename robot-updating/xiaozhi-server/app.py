@@ -1,6 +1,7 @@
 import sys
 import uuid
 import signal
+import socket
 import asyncio
 from aioconsole import ainput
 from config.settings import load_config
@@ -44,6 +45,37 @@ async def monitor_stdin():
         await ainput()  # 异步等待输入，消费回车
 
 
+def _ensure_ports_free(ports) -> None:
+    """启动前预检端口，避免「重复启动」变成半残服务。
+
+    Windows 上 SO_REUSEADDR 允许第二个进程也绑定 8001，于是两个实例同时"运行"：
+    连接会随机落到其中一个（可能正是 HTTP/UDP 没绑上的那个），现象是
+    8003/8004 报「端口被占用」+ 机器人时好时坏。这里直接失败退出并说清原因。
+    """
+    busy = []
+    for port in ports:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.settimeout(0.5)
+        try:
+            if probe.connect_ex(("127.0.0.1", int(port))) == 0:
+                busy.append(int(port))
+        finally:
+            probe.close()
+    if not busy:
+        return
+    message = (
+        f"\n[无法启动] 端口 {', '.join(str(p) for p in busy)} 已被占用："
+        "很可能已经有一个米宝服务端正在运行。\n"
+        "  1) 屏幕上那个「Mibao-1 AI Server」窗口就是正在跑的服务，不要重复双击；\n"
+        "  2) 要重启：先关掉旧窗口，等 3 秒再启动本程序；\n"
+        "  3) 若确定没有旧窗口，则是别的程序占了端口，"
+        "可改 app\\data\\.config.yaml 里的 port / http_port。\n"
+    )
+    print(message)
+    logger.bind(tag=TAG).error(message)
+    sys.exit(1)
+
+
 async def main():
     # ffmpeg 只在少数路径用到（本地音频文件播放/格式转换，见 core/utils/util.py 的
     # AudioSegment 相关函数）。便携版（米宝服务端.exe）默认不带 ffmpeg，用
@@ -58,6 +90,14 @@ async def main():
         else:
             raise
     config = await load_config()
+
+    # 先做端口预检：重复启动会退化成「两个实例抢连接」的假运行状态
+    _ensure_ports_free(
+        [
+            int(config["server"].get("port", 8000)),
+            int(config["server"].get("http_port", 8003)),
+        ]
+    )
 
     # auth_key优先级：配置文件server.auth_key > manager-api.secret > 自动生成
     # auth_key用于jwt认证，比如视觉分析接口的jwt认证、ota接口的token生成与websocket认证
