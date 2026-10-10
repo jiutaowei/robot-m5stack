@@ -154,6 +154,20 @@ std::string sta_ip_address()
     return buf;
 }
 
+// 真正关联上的 AP 名（实况）。不能用 WifiManager::GetSsid()：它返回的是
+// WifiStation 里「正在尝试连的那个」（StartConnect 里先赋值再 esp_wifi_connect），
+// 密码错了它照样是目标名；也不能只看 IP 非空 —— 设备可能还挂在上一张网上，
+// IP 是旧的，新密码根本没机会被验证。esp_wifi_sta_get_ap_info() 反映的是
+// 当前真正 associate 的 AP，是唯一可靠的判据。
+std::string associated_ssid()
+{
+    wifi_ap_record_t info = {};
+    if (esp_wifi_sta_get_ap_info(&info) != ESP_OK) {
+        return std::string();
+    }
+    return std::string(reinterpret_cast<const char*>(info.ssid));
+}
+
 // ==================== 扫描任务 ====================
 
 void wifi_scan_task(void* arg)
@@ -317,12 +331,22 @@ void wifi_connect_task(void* arg)
         esp_wifi_connect();
     }
 
-    // 3) 等真正拿到 IP（只"关联成功"不算，DHCP 完成才算连上；最多 24s）
-    bool connected = false;
+    // 3) 等「真的挂到目标网上且拿到 IP」（最多 24s）。
+    // 必须同时满足两点：
+    //   · 实际关联的 AP == 目标网（密码错时框架会顺着队列改连别的已保存网，
+    //     例如办公室的 jinhetech，旧实现只等「IP 非空」就宣布成功，于是屏幕
+    //     显示"连接成功"、IP 却是旧网的 192.168.1.29）；
+    //   · DHCP 完成（只 associate 不算连上）。
+    bool connected      = false;
+    bool on_other_net   = false;
     for (int i = 0; i < 120 && !ctx->cancel; i++) {
-        if (!sta_ip_address().empty()) {
-            connected = true;
-            break;
+        const std::string assoc = associated_ssid();
+        if (!assoc.empty()) {
+            if (assoc == ctx->target_ssid && !sta_ip_address().empty()) {
+                connected = true;
+                break;
+            }
+            on_other_net = true;  // 此刻挂的是别的网
         }
         vTaskDelay(pdMS_TO_TICKS(200));
     }
@@ -333,18 +357,17 @@ void wifi_connect_task(void* arg)
         return;
     }
 
+    if (!connected && on_other_net) {
+        mclog::tagWarn(_tag, "target '{}' not reached (currently on another saved network)",
+                       ctx->target_ssid);
+    }
+
     if (connected) {
-        ctx->ip    = sta_ip_address();
+        ctx->ip = sta_ip_address();
+        mclog::tagInfo(_tag, "connected to target '{}' ip={}", ctx->target_ssid, ctx->ip);
+
         ctx->error.clear();
         ctx->phase = static_cast<int>(JobPhase::Connected);
-        const std::string actual = wifi.GetSsid();
-        mclog::tagInfo(_tag, "connected to {} ip={} (framework ssid='{}')", ctx->target_ssid, ctx->ip,
-                       actual);
-        if (!actual.empty() && actual != ctx->target_ssid) {
-            // 极少数情况：目标 AP 与另一条已保存的 AP 同时在信号范围内，
-            // 框架按扫描顺序挑中了另一条。如实显示，别让用户以为连错了网。
-            ctx->error = "（注意：框架连到了 " + actual + "）";
-        }
 
         // 刚配好网的设备 NVS 里没有服务器地址，若不在这里发现一次，
         // 紧接着进入 AI 对话时 xiaozhi 会回落到编译期默认的公网小智云
