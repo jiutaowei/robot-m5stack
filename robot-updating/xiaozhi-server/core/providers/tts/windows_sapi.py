@@ -29,7 +29,11 @@ import subprocess
 import uuid
 from datetime import datetime
 
+from config.logger import setup_logging
 from core.providers.tts.base import TTSProviderBase
+
+TAG = __name__
+logger = setup_logging()
 
 DEFAULT_VOICE = "Microsoft Huihui Desktop"
 
@@ -71,10 +75,16 @@ class TTSProvider(TTSProviderBase):
 
     @staticmethod
     def _powershell_exe():
-        for name in ("powershell.exe", "powershell", "pwsh.exe", "pwsh"):
-            probe = subprocess.run(
-                ["where", name], capture_output=True, text=True, shell=False
-            )
+        """优先 pwsh（PowerShell 7）。
+
+        实测（本机 Windows 11）：
+          · powershell.exe 5.1 只注册了 "Microsoft Huihui Desktop" + Zira，
+            选 Kangkang/Yaoyao/Huihui 会抛 "No matching voice is installed"；
+          · pwsh 7 能看到全部 5 个（Huihui Desktop/Huihui/Yaoyao/Kangkang/Zira）。
+        目标机没装 pwsh 时会自动回退到 powershell.exe（用默认音色，不报错）。
+        """
+        for name in ("pwsh.exe", "pwsh", "powershell.exe", "powershell"):
+            probe = subprocess.run(["where", name], capture_output=True, text=True, shell=False)
             if probe.returncode == 0 and probe.stdout.strip():
                 return probe.stdout.strip().splitlines()[0]
         return "powershell.exe"
@@ -86,7 +96,8 @@ class TTSProvider(TTSProviderBase):
             "[Console]::InputEncoding=[System.Text.Encoding]::UTF8;"
             "Add-Type -AssemblyName System.Speech;"
             "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
-            f"try {{ $s.SelectVoice('{voice}') }} catch {{ }};"
+            f"try {{ $s.SelectVoice('{voice}') }} catch {{ Write-Output ('SELFAIL=' + $_.Exception.Message) }};"
+            "Write-Output ('USED=' + $s.Voice.Name);"
             f"$s.Rate = {self.rate};"
             f"$s.Volume = {self.volume};"
             f"$s.SetOutputToWaveFile('{wav_path}');"
@@ -112,6 +123,18 @@ class TTSProvider(TTSProviderBase):
         if proc.returncode != 0:
             stderr = proc.stderr.decode("utf-8", "replace")[:300]
             raise Exception(f"Windows SAPI 合成失败(exit {proc.returncode}): {stderr}")
+        # 音色没选中时（老 powershell.exe 只认 Huihui Desktop）给出提示，但不中断
+        stdout = proc.stdout.decode("utf-8", "replace")
+        used = ""
+        for line in stdout.splitlines():
+            if line.startswith("USED="):
+                used = line[5:].strip()
+            elif line.startswith("SELFAIL="):
+                logger.bind(tag=TAG).warning(
+                    f"音色 '{self.voice}' 不可用，回退默认音色: {line[8:].strip()[:120]}"
+                )
+        if used and self.voice and used != self.voice:
+            logger.bind(tag=TAG).warning(f"请求音色 '{self.voice}' 未生效，实际使用 '{used}'")
         if not os.path.exists(wav_path) or os.path.getsize(wav_path) <= 44:
             raise Exception("Windows SAPI 没有产生有效音频（检查 voice 名是否存在）")
 
