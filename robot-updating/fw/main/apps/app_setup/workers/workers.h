@@ -242,6 +242,9 @@ private:
     std::uint32_t _last_scroll_ms = 0;
     std::string _sel_ssid;
     std::string _last_pwd;  // 失败重试时用（输入框会随页面销毁）
+    // 「当前连的是哪张网」显示用：避免每帧重复 setText / 重建列表
+    std::string _last_status_text;
+    std::string _applied_current_ssid;
     // 「已保存的网络不问密码」相关状态：
     bool _using_saved_pwd = false;  // 本次连接用的是 NVS 里保存的密码
     std::string _pwd_hint;          // 密码页的提示语（自动连接失败时说明原因）
@@ -270,6 +273,7 @@ private:
 
     void rebuild_rows();
     void sync_from_job();
+    void refresh_scan_status();
 };
 
 /**
