@@ -58,6 +58,10 @@ def build_kokoro(model_path, voices_path, threads):
     # 实测：ORT_ENABLE_ALL 建会话要 52.7s（82M 模型全图优化太慢），关掉图优化后
     # 0.8s，推理速度基本不变（短句 ~1.0-1.3s、长句 ~3.7s）。启动快更重要。
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+    # 关掉 ORT 的内存池/内存复用：默认会预留大块 arena，本机实测 worker 峰值 1.15GB，
+    # 关掉后显著下降（这台机器内存本来就紧张，出现「卡死」要先降占用）。
+    so.enable_cpu_mem_arena = False
+    so.enable_mem_pattern = False
     sess = ort.InferenceSession(
         model_path, sess_options=so, providers=["CPUExecutionProvider"]
     )
@@ -65,6 +69,21 @@ def build_kokoro(model_path, voices_path, threads):
     k = Kokoro(model_path, voices_path)
     k.sess = _SessShim(sess)
     return k
+
+
+def _watch_parent():
+    """父进程（服务端）退出后自动结束，避免留下孤儿 worker（之前实测有残留）。"""
+    import time
+
+    parent = os.getppid()
+    while True:
+        time.sleep(5)
+        try:
+            if os.getppid() != parent:
+                _log("父进程已退出，worker 自行退出")
+                os._exit(0)
+        except Exception:
+            os._exit(0)
 
 
 def main():
@@ -96,6 +115,10 @@ def main():
     out.write(b"READY\n")
     out.flush()
     _log(f"worker 就绪，线程={threads}")
+
+    import threading
+
+    threading.Thread(target=_watch_parent, daemon=True).start()
 
     for raw in sys.stdin.buffer:
         line = raw.decode("utf-8", "replace").strip()
