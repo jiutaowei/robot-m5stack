@@ -256,7 +256,7 @@ Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 $env:PYTHONUTF8 = '1'
 $check = & (Join-Path $OutDir 'runtime\python.exe') -c @'
 import importlib, sys
-mods = ['pywintypes', 'mcp', 'opuslib_next', 'onnxruntime', 'edge_tts', 'httpx',
+mods = ['pywintypes', 'mcp', 'opuslib_next', 'onnxruntime', 'edge_tts', 'piper', 'httpx',
         'websockets', 'aiohttp', 'pydub', 'yaml', 'loguru', 'cryptography', 'requests', 'numpy']
 bad = []
 for m in mods:
