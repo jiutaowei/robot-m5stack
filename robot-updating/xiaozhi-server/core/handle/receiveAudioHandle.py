@@ -14,6 +14,23 @@ from core.handle.sendAudioHandle import send_stt_message, SentenceType
 TAG = __name__
 
 
+def aec_interrupt_enabled(conn: "ConnectionHandler") -> bool:
+    """是否允许「VAD 听到人声就打断正在播报的回答」。
+
+    默认 True（保持上游行为：支持用户抢话）。嘈杂环境里 VAD 会把旁人或喇叭回声
+    当成人声，导致回答刚开口就被打断（只出文字没有声音），可在 data/.config.yaml
+    里设置 server.aec_interrupt: false 关闭。
+    """
+    try:
+        server = conn.config.get("server", {}) if isinstance(conn.config, dict) else {}
+        value = server.get("aec_interrupt", True)
+        if isinstance(value, str):
+            return value.strip().lower() not in ("false", "0", "no", "off")
+        return bool(value)
+    except Exception:
+        return True
+
+
 async def handleAudioMessage(conn: "ConnectionHandler", pcm_frame):
     # 当前片段是否有人说话
     have_voice = conn.vad.is_vad(conn, pcm_frame)
@@ -25,7 +42,11 @@ async def handleAudioMessage(conn: "ConnectionHandler", pcm_frame):
             conn.vad_resume_task = asyncio.create_task(resume_vad_detection(conn))
         return
     # 服务端AEC功能需要实时触发打断
-    if conn.client_aec and have_voice:
+    # 注意：嘈杂环境（旁边有人说话）或喇叭回声会让 VAD 误判"人声" → 每轮回答刚开口
+    # 就被打断，TTS 线程被终止，表现为「只出文字没有播报」。可用配置关掉：
+    #   server:
+    #     aec_interrupt: false
+    if conn.client_aec and have_voice and aec_interrupt_enabled(conn):
         if conn.client_is_speaking and conn.client_listen_mode != "manual":
             conn.logger.bind(tag=TAG).info(
                 f"[AEC] VAD检测到人声，触发打断 speaking={conn.client_is_speaking} mode={conn.client_listen_mode}"
@@ -86,8 +107,8 @@ async def startToChat(conn: "ConnectionHandler", text):
             await max_out_size(conn)
             return
 
-    # manual 模式下不打断正在播放的内容
-    if conn.client_is_speaking and conn.client_listen_mode != "manual":
+    # manual 模式下不打断正在播放的内容；server.aec_interrupt=false 时同样不打断
+    if conn.client_is_speaking and conn.client_listen_mode != "manual" and aec_interrupt_enabled(conn):
         await handleAbortMessage(conn)
 
     # 首先进行意图分析，使用实际文本内容
