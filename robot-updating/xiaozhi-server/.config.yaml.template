@@ -71,10 +71,47 @@ LLM:
     max_tokens: 500
 
 TTS:
-  # 微软 Edge TTS：免费、无需 key
+  # 微软 Edge TTS：免费、无需 key、音色最好（晓晓）；但大陆部分出口会被 403。
   EdgeTTS:
     type: edge
     voice: zh-CN-XiaoxiaoNeural
+    output_dir: tmp/
+
+  # 优先级链（推荐 selected_module.TTS: FallbackTTS）：在线优先，失败自动回落本地。
+  # 连续失败 failure_streak_threshold 次后冷却 cooldown_seconds，到期自动再试 ——
+  # 换电脑/换网络无需改配置即可自动用回在线好音色。
+  FallbackTTS:
+    type: fallback
+    chain: [EdgeTTS, KokoroTTS, PiperTTS]
+    failure_streak_threshold: 2
+    cooldown_seconds: 600
+    output_dir: tmp/
+
+  # Kokoro 离线神经 TTS（比 Piper/SAPI 自然，需先跑 scripts/fetch_tts_models.ps1）
+  KokoroTTS:
+    type: kokoro
+    python: .tools\kokoro-venv\Scripts\python.exe
+    worker: scripts/kokoro_worker.py
+    model: models/kokoro/kokoro-v1.0.onnx
+    voices: models/kokoro/voices.json
+    voice: zf_xiaoxiao      # 或 zf_xiaobei / zm_yunxi
+    speed: 1.0
+    threads: 4
+    output_dir: tmp/
+
+  # Piper 离线神经 TTS（轻量兜底：无额外环境，模型 60MB）
+  PiperTTS:
+    type: piper_tts
+    model: models/piper/zh_CN-huayan-medium.onnx
+    length_scale: 1.0
+    output_dir: tmp/
+
+  # Windows 本地 TTS（SAPI）：不推荐（绑定本机音色、换电脑即失效），仅作应急
+  WindowsSAPI:
+    type: windows_sapi
+    voice: Microsoft Huihui Desktop
+    rate: 2
+    volume: 100
     output_dir: tmp/
 
 # ============================================================================
