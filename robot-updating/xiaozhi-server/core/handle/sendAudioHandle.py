@@ -74,8 +74,13 @@ async def _wait_for_audio_completion(conn: "ConnectionHandler"):
 
         # 等待预缓冲包播放完成
         # 前N个包直接发送，增加2个网络抖动包，需要额外等待它们在客户端播放完成
+        # 有发送提前量时（lead_ms），设备手上还压着这么多没播完的音频，要一并等掉，
+        # 否则最后一句会被提前 stop 截断。
         frame_duration_ms = rate_controller.frame_duration
-        pre_buffer_playback_time = (PRE_BUFFER_COUNT + 2) * frame_duration_ms / 1000.0
+        pre_buffer_playback_time = (
+            (PRE_BUFFER_COUNT + 2) * frame_duration_ms
+            + max(0, int(getattr(rate_controller, "lead_ms", 0) or 0))
+        ) / 1000.0
         await asyncio.sleep(pre_buffer_playback_time)
 
         conn.logger.bind(tag=TAG).debug("音频发送完成")
@@ -184,10 +189,18 @@ def _get_or_create_rate_controller(
             need_reset = True
 
     if need_reset:
+        # 发送提前量（抖动缓冲）：server.audio_send_lead_ms，默认 0=保持上游准点发送。
+        # 设几百毫秒可显著减少设备端「一顿一顿」的卡顿，代价是延迟同等多一点。
+        try:
+            _server_cfg = conn.config.get("server", {}) if isinstance(conn.config, dict) else {}
+            _lead_ms = int(_server_cfg.get("audio_send_lead_ms", 0) or 0)
+        except Exception:
+            _lead_ms = 0
         # 创建或获取 rate_controller
         if not hasattr(conn, "audio_rate_controller"):
-            conn.audio_rate_controller = AudioRateController(frame_duration)
+            conn.audio_rate_controller = AudioRateController(frame_duration, lead_ms=_lead_ms)
         else:
+            conn.audio_rate_controller.lead_ms = max(0, _lead_ms)
             conn.audio_rate_controller.reset()
 
         # 初始化 flow_control

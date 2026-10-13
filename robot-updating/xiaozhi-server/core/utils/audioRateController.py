@@ -13,14 +13,20 @@ class AudioRateController:
     解决高并发下的时间累积误差问题
     """
 
-    def __init__(self, frame_duration=60):
+    def __init__(self, frame_duration=60, lead_ms=0):
         """
         Args:
             frame_duration: 单个音频帧时长（毫秒），默认60ms
+            lead_ms: 发送提前量（毫秒）。控制器默认是「准点发送」——第一帧立刻发，
+                之后每 frame_duration 才发下一帧，设备端一点余量都没有，网络抖动或
+                调度延迟就会让设备缓冲饿空，听起来一顿一顿（卡顿）。
+                把它设为几百毫秒（如 600）就相当于给设备一个抖动缓冲：前 lead_ms
+                的音频会一次性提前发过去。
         """
         self.frame_duration = frame_duration
+        self.lead_ms = max(0, int(lead_ms or 0))
         self.queue = deque()
-        self.play_position = 0  # 虚拟播放位置（毫秒）
+        self.play_position = -self.lead_ms  # 虚拟播放位置（毫秒），负值=提前量
         self.start_timestamp = None  # 开始时间戳（只读，不修改）
         self.pending_send_task = None
         self.logger = logger
@@ -36,7 +42,7 @@ class AudioRateController:
             # 取消任务后，任务会在下次事件循环时清理，无需阻塞等待
 
         self.queue.clear()
-        self.play_position = 0
+        self.play_position = -self.lead_ms  # 负值=发送提前量（抖动缓冲）
         self.start_timestamp = None  # 由首个音频包设置
         self._last_queue_empty_time = 0  # 重置时间
         # 相关事件处理
