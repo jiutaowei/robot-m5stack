@@ -84,12 +84,15 @@ TTS:
 
   # 优先级链（推荐 selected_module.TTS: FallbackTTS）：在线优先，失败自动回落本地。
   # 连续失败 failure_streak_threshold 次后冷却 cooldown_seconds，到期自动再试 ——
-  # 换电脑/换网络无需改配置即可自动用回在线好音色。
+  # 换电脑/换网络无需改配置即可自动用回在线好音色；连不上时也不会没声音。
+  # sub_provider_timeout：单个 provider 硬超时（上游 Edge 连不上时可能挂住不返回）。
+  # 想要更自然的离线音色可把 KokoroTTS 插进链里（更慢、占内存更多）。
   FallbackTTS:
     type: fallback
-    chain: [EdgeTTS, KokoroTTS, PiperTTS]
+    chain: [EdgeTTS, PiperTTS]
     failure_streak_threshold: 2
     cooldown_seconds: 600
+    sub_provider_timeout: 8
     output_dir: tmp/
 
   # Kokoro 离线神经 TTS（比 Piper/SAPI 自然，需先跑 scripts/fetch_tts_models.ps1）
