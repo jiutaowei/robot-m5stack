@@ -23,6 +23,7 @@
 
 import asyncio
 import os
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -32,6 +33,11 @@ from core.providers.tts.base import TTSProviderBase
 
 TAG = __name__
 logger = setup_logging()
+
+# 熔断状态放模块级：TTS provider 是「每条连接各建一个」，若把状态放在实例上，
+# 每次新对话都会重新白试一次被墙的在线 TTS（实测每段新会话多等 ~2×4s）。
+_BREAKER = {}
+_BREAKER_LOCK = threading.Lock()
 
 
 def _server_root() -> str:
@@ -93,28 +99,38 @@ class TTSProvider(TTSProviderBase):
         # 熔断：某个 provider 连续失败 threshold 次后冷却 cooldown 秒不再尝试。
         # 目的是别让「在线被墙」每句都白等一次 403；冷却到期会自动再试，
         # 所以换了网络/换电脑后无需改配置即可自动用回在线音色。
+        # 状态放在模块级 _BREAKER（跨连接共享），否则每段新对话都要重新白试。
         self.fail_threshold = int(config.get("failure_streak_threshold", 2) or 2)
         self.cooldown = float(config.get("cooldown_seconds", 600) or 600)
-        self.stats = {name: {"streak": 0, "skip_until": 0.0} for name, _ in self.providers}
+
+    def _state(self, name: str) -> dict:
+        with _BREAKER_LOCK:
+            st = _BREAKER.get(name)
+            if st is None:
+                st = {"streak": 0, "skip_until": 0.0}
+                _BREAKER[name] = st
+            return st
 
     def _available(self, name: str) -> bool:
-        return time.time() >= self.stats[name]["skip_until"]
+        return time.time() >= self._state(name)["skip_until"]
 
     def _mark_fail(self, name: str):
-        s = self.stats[name]
-        s["streak"] += 1
-        if self.fail_threshold > 0 and s["streak"] >= self.fail_threshold:
-            s["skip_until"] = time.time() + self.cooldown
-            logger.bind(tag=TAG).warning(
-                f"TTS '{name}' 连续失败 {s['streak']} 次，冷却 {self.cooldown:.0f}s 后再试"
-            )
+        with _BREAKER_LOCK:
+            s = self._state(name)
+            s["streak"] += 1
+            if self.fail_threshold > 0 and s["streak"] >= self.fail_threshold:
+                s["skip_until"] = time.time() + self.cooldown
+                logger.bind(tag=TAG).warning(
+                    f"TTS '{name}' 连续失败 {s['streak']} 次，冷却 {self.cooldown:.0f}s 后再试"
+                )
 
     def _mark_ok(self, name: str):
-        s = self.stats[name]
-        if s["streak"]:
-            logger.bind(tag=TAG).info(f"TTS '{name}' 恢复正常")
-        s["streak"] = 0
-        s["skip_until"] = 0.0
+        with _BREAKER_LOCK:
+            s = self._state(name)
+            if s["streak"]:
+                logger.bind(tag=TAG).info(f"TTS '{name}' 恢复正常")
+            s["streak"] = 0
+            s["skip_until"] = 0.0
 
     def generate_filename(self, extension=".wav"):
         return os.path.join(
