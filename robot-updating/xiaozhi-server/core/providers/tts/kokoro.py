@@ -34,7 +34,6 @@ import subprocess
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime
 
 from config.logger import setup_logging
@@ -48,8 +47,6 @@ _WORKER = None
 _WORKER_KEY = None
 _WORKER_LOCK = threading.RLock()  # 保护 worker 的创建/重启
 _REQ_LOCK = threading.Lock()      # 串行化对 worker 的请求（行协议不支持并发）
-# 请求放进线程池执行，超时才能「取消等待」——否则 worker 卡住会把整条 TTS 调用挂死
-_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kokoro")
 
 
 def _server_root() -> str:
@@ -210,35 +207,52 @@ class TTSProvider(TTSProviderBase):
             f"tts-{datetime.now().date()}@{uuid.uuid4().hex}{extension}",
         )
 
+    def _request_with_timeout(self, worker, text: str, timeout: float) -> bytes:
+        """在独立线程里发请求并 join(timeout)。
+
+        不能用「共享单线程池 + future.result(timeout)」：一旦某个请求卡住，那个线程
+        会永久占住池里唯一的线程，之后所有请求都排队等超时（现场表现为「完全没声音、
+        日志里连失败都不打」）。每请求一线程 + join，卡住就放弃该线程（杀掉 worker
+        后阻塞的读会自行结束），不会有队头阻塞。
+        """
+        box = {}
+
+        def run():
+            try:
+                box["data"] = worker.request(text, self.voice, self.speed, timeout)
+            except Exception as e:  # noqa: BLE001
+                box["err"] = e
+
+        t = threading.Thread(target=run, daemon=True, name="kokoro-req")
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            raise TimeoutError(f"Kokoro 合成超过 {timeout:.0f}s 无响应")
+        if "err" in box:
+            raise box["err"]
+        return box.get("data") or b""
+
     def _synthesize_blocking(self, text: str) -> bytes:
         global _WORKER
-        timeout = max(5.0, float(self.tts_timeout) * 2)  # 含首句可能的排队
+        timeout = max(8.0, float(self.tts_timeout))
         worker = _get_worker(self.python, self.script, self.model, self.voices,
                              self.threads, self.log_path)
         with _REQ_LOCK:
+            last_err = None
             for attempt in (1, 2):
                 try:
-                    fut = _EXECUTOR.submit(worker.request, text, self.voice,
-                                           self.speed, timeout)
-                    return fut.result(timeout=timeout)
-                except FutureTimeout:
-                    # worker 卡住：杀掉它（阻塞的读会随之结束），重启后重试一次
+                    return self._request_with_timeout(worker, text, timeout)
+                except Exception as e:  # noqa: BLE001
+                    last_err = e
                     logger.bind(tag=TAG).warning(
-                        f"Kokoro worker 超过 {timeout:.0f}s 无响应，杀掉重启（第 {attempt} 次）"
+                        f"Kokoro 请求失败（第 {attempt} 次），杀掉 worker 重启: {e}"
                     )
                     with _WORKER_LOCK:
                         worker.stop()
                         _WORKER = None
                     worker = _get_worker(self.python, self.script, self.model,
                                          self.voices, self.threads, self.log_path)
-                except Exception as e:
-                    logger.bind(tag=TAG).warning(f"Kokoro worker 请求失败，重启后重试: {e}")
-                    with _WORKER_LOCK:
-                        worker.stop()
-                        _WORKER = None
-                    worker = _get_worker(self.python, self.script, self.model,
-                                         self.voices, self.threads, self.log_path)
-            raise Exception("Kokoro worker 连续两次无响应")
+            raise Exception(f"Kokoro 连续两次失败: {last_err}")
 
     async def text_to_speak(self, text, output_file):
         try:

@@ -30,14 +30,15 @@ from datetime import datetime
 
 from config.logger import setup_logging
 from core.providers.tts.base import TTSProviderBase
-
 TAG = __name__
 logger = setup_logging()
 
 # 熔断状态放模块级：TTS provider 是「每条连接各建一个」，若把状态放在实例上，
 # 每次新对话都会重新白试一次被墙的在线 TTS（实测每段新会话多等 ~2×4s）。
+# 必须是 RLock：_mark_fail/_mark_ok 已经持锁，内部还会调也会加锁的 _state()，
+# 用普通 Lock 会自我死锁（现场：第一次失败后 TTS 线程永久冻住，无声音无日志）。
 _BREAKER = {}
-_BREAKER_LOCK = threading.Lock()
+_BREAKER_LOCK = threading.RLock()
 
 
 def _server_root() -> str:
@@ -102,6 +103,10 @@ class TTSProvider(TTSProviderBase):
         # 状态放在模块级 _BREAKER（跨连接共享），否则每段新对话都要重新白试。
         self.fail_threshold = int(config.get("failure_streak_threshold", 2) or 2)
         self.cooldown = float(config.get("cooldown_seconds", 600) or 600)
+        # 单个 provider 的硬超时：上游 EdgeTTS 的网络调用没有超时，网络一变就可能
+        # 「连上了但永不返回」，于是整条链卡在第一个 provider 上：既不出声也不报错
+        # （现场：探针等 41s、0 音频帧、日志里连一句失败都没有）。超时即视为失败。
+        self.sub_timeout = float(config.get("sub_provider_timeout", 15) or 15)
 
     def _state(self, name: str) -> dict:
         with _BREAKER_LOCK:
@@ -138,6 +143,31 @@ class TTSProvider(TTSProviderBase):
             f"tts-{datetime.now().date()}@{uuid.uuid4().hex}{extension}",
         )
 
+    def _call_with_hard_timeout(self, prov, text: str, timeout: float):
+        """在独立线程 + 独立事件循环里调用某个 provider，并用 join 做硬超时。
+
+        为什么不能用 asyncio.wait_for：上游 EdgeTTS 内部存在同步阻塞调用，一旦卡住
+        会把事件循环整个堵死，wait_for 的超时根本没有机会触发（现场：日志停在
+        「尝试 EdgeTTS ...」之后，既不出声也没有任何失败/超时记录）。
+        放进独立线程后，卡住的那个线程被放弃，主流程照常超时切换到下一个 provider。
+        """
+        box = {}
+
+        def run():
+            try:
+                box["data"] = asyncio.run(prov.text_to_speak(text, None))
+            except Exception as e:  # noqa: BLE001
+                box["err"] = e
+
+        t = threading.Thread(target=run, daemon=True, name="tts-sub")
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            raise TimeoutError(f"{timeout:.0f}s 无响应（已放弃该线程）")
+        if "err" in box:
+            raise box["err"]
+        return box.get("data")
+
     async def text_to_speak(self, text, output_file):
         last_err = None
         tried = 0
@@ -146,7 +176,10 @@ class TTSProvider(TTSProviderBase):
                 continue
             tried += 1
             try:
-                data = await prov.text_to_speak(text, None)
+                # 直接同步调用：基类是在自己的线程里 asyncio.run(text_to_speak) 的，
+                # 这里再用 await asyncio.to_thread 反而会卡在事件循环/线程池调度上
+                # （实测：链入口有日志，但 8s 超时再也不触发）。
+                data = self._call_with_hard_timeout(prov, text, self.sub_timeout)
                 if not data:
                     raise Exception("返回空音频")
                 # 基类随后会用 self.audio_file_type 解码，必须跟着命中的 provider 走
@@ -165,9 +198,11 @@ class TTSProvider(TTSProviderBase):
                 continue
         if tried == 0:
             # 全在冷却中：临时忽略冷却，保证一定有声音
+            skipped = [n for n, _ in self.providers if not self._available(n)]
+            logger.bind(tag=TAG).info(f"所有 provider 均在冷却中（{skipped}），本次强制重试")
             for name, prov in self.providers:
                 try:
-                    data = await prov.text_to_speak(text, None)
+                    data = self._call_with_hard_timeout(prov, text, self.sub_timeout)
                     if data:
                         self.audio_file_type = prov.audio_file_type
                         self._mark_ok(name)
