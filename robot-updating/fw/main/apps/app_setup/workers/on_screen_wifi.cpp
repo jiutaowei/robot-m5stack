@@ -98,25 +98,14 @@ lv_point_t current_point()
     return p;
 }
 
-/** 真正关联上的 AP 名（实况）。空串 = 当前没挂在任何网上。
- *
- * 不能用 WifiManager::IsConnected()/GetSsid()：
- *   · 打开配网页时扫描任务会 StopStation() 独占驱动去扫描，IsConnected() 立刻变
- *     false —— 界面于是显示「当前: 未连接」，可设备其实还挂在原网络上（现场反馈）；
- *   · GetSsid() 返回的是 StartConnect() 里「准备连的那个」（先赋值再 connect），
- *     密码错了它照样返回目标名。
- * esp_wifi_sta_get_ap_info() 反映驱动层真实关联状态，是唯一可靠的判据。
- */
-std::string associated_ssid()
+/** 当前已连的 WiFi 名；未连接时返回空串。用于在配网页上标出「现在挂在谁身上」。 */
+std::string current_wifi_ssid()
 {
-    wifi_ap_record_t info = {};
-    if (esp_wifi_sta_get_ap_info(&info) != ESP_OK) {
+    auto& wifi = WifiManager::GetInstance();
+    if (!wifi.IsConnected()) {
         return std::string();
     }
-    if (info.ssid[0] == '\0') {
-        return std::string();
-    }
-    return std::string(reinterpret_cast<const char*>(info.ssid));
+    return wifi.GetSsid();
 }
 
 }  // namespace
@@ -163,6 +152,20 @@ std::string sta_ip_address()
     char buf[16];
     snprintf(buf, sizeof(buf), IPSTR, IP2STR(&info.ip));
     return buf;
+}
+
+// 真正关联上的 AP 名（实况）。不能用 WifiManager::GetSsid()：它返回的是
+// WifiStation 里「正在尝试连的那个」（StartConnect 里先赋值再 esp_wifi_connect），
+// 密码错了它照样是目标名；也不能只看 IP 非空 —— 设备可能还挂在上一张网上，
+// IP 是旧的，新密码根本没机会被验证。esp_wifi_sta_get_ap_info() 反映的是
+// 当前真正 associate 的 AP，是唯一可靠的判据。
+std::string associated_ssid()
+{
+    wifi_ap_record_t info = {};
+    if (esp_wifi_sta_get_ap_info(&info) != ESP_OK) {
+        return std::string();
+    }
+    return std::string(reinterpret_cast<const char*>(info.ssid));
 }
 
 // ==================== 扫描任务 ====================
@@ -687,33 +690,6 @@ void OnScreenWifiWorker::build_status_page(const char* title, const std::string&
     _btn_back->onClick().connect([this]() { _pending = Pending::ToScan; });
 }
 
-void OnScreenWifiWorker::refresh_scan_status()
-{
-    // 扫描/重连都在后台任务里进行，状态会自己变（进配网页时驱动被独占 -> 掉线 ->
-    // 几秒后框架重连回来）。只在扫描页、且内容真的变了时才写 label，避免每帧刷。
-    if (_page != Page::Scan || !_label_status) {
-        return;
-    }
-    const std::string current = associated_ssid();
-    size_t count              = 0;
-    if (_job) {
-        std::lock_guard<std::mutex> lock(_job->mtx);
-        count = _job->aps.size();
-    }
-    std::string line = current.empty() ? "当前: 未连接" : ("当前: " + current);
-    line += (count == 0) ? "   未找到网络" : ("   " + std::to_string(count) + " 个网络");
-    if (line != _last_status_text) {
-        _last_status_text = line;
-        _label_status->setText(line.c_str());
-    }
-    if (current != _applied_current_ssid) {
-        // 挂上的网络变了：重建列表，让高亮和「已连」跟着走
-        mclog::tagInfo(_tag, "current network changed: '{}' -> '{}'", _applied_current_ssid,
-                       current);
-        rebuild_rows();
-    }
-}
-
 void OnScreenWifiWorker::rebuild_rows()
 {
     _rows.clear();
@@ -730,16 +706,12 @@ void OnScreenWifiWorker::rebuild_rows()
 
     // 当前挂在哪张网上：状态行直接写出来（配网页最常问的就是这个），
     // 列表里那一行同时换底色，扫一眼就能对上。
-    // 注意：扫描期间驱动被独占，这一刻可能确实还没重新挂上，稍后 update() 里会
-    // 自动刷新（见 refresh_scan_status），不会一直停在「未连接」。
-    const std::string current = associated_ssid();
+    const std::string current = current_wifi_ssid();
     if (_label_status) {
         std::string line = current.empty() ? "当前: 未连接" : ("当前: " + current);
         line += aps.empty() ? "   未找到网络" : ("   " + std::to_string(aps.size()) + " 个网络");
         _label_status->setText(line.c_str());
-        _last_status_text     = line;
     }
-    _applied_current_ssid = current;
 
     int y = 0;
     for (size_t i = 0; i < aps.size(); i++) {
@@ -1003,7 +975,6 @@ void OnScreenWifiWorker::update()
     }
 
     sync_from_job();
-    refresh_scan_status();
 
     // 连接成功后自动收尾，回到 launcher（有附加提示时多留一会儿给人看）。
     // 必须等连接任务真正结束（里面还要做服务器地址发现），否则 launcher 会
