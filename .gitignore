@@ -60,3 +60,7 @@ Thumbs.db
 
 # ===== 本地配网凭据（含 WiFi 密码，禁止入库）=====
 robot-updating/fw/main/mibao_prov_local.h
+
+# ===== 离线 TTS 模型（大文件，超过 GitHub 限制；用 scripts/fetch_tts_models.ps1 下载）=====
+robot-updating/xiaozhi-server/models/kokoro/
+robot-updating/xiaozhi-server/models/piper/
