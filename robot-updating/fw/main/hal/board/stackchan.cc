@@ -744,10 +744,16 @@ public:
 
     virtual void SetPowerSaveLevel(PowerSaveLevel level) override
     {
-        if (level != PowerSaveLevel::LOW_POWER) {
+        // 米宝一号：始终用 PERFORMANCE（关闭 WiFi 省电）。
+        // 上游逻辑会在空闲时切到 LOW_POWER（WIFI_PS_MAX_MODEM，深度休眠），说话时才切
+        // PERFORMANCE；实测这样设备大部分时间在睡，同网段 ping 平均 681ms/峰值 1322ms，
+        // 实时语音必然一顿一顿（卡顿），而且每轮回答开头的几句最明显。
+        // 这里忽略上层请求，恒定为 PERFORMANCE，代价是待机功耗略增。
+        (void)level;
+        if (power_save_timer_) {
             power_save_timer_->WakeUp();
         }
-        WifiBoard::SetPowerSaveLevel(level);
+        WifiBoard::SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     }
 
     virtual Backlight* GetBacklight() override
