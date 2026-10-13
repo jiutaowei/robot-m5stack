@@ -27,6 +27,22 @@ import wave
 
 DEFAULT_THREADS = 4
 
+# 中文 G2P：必须用 misaki 的 ZHG2P（Kokoro 训练时就是这套音素）。
+# kokoro-onnx 内置对 lang="cmn" 走 espeak 音素，音素集不匹配 → 听起来不像普通话。
+#   实测 misaki: 'ni↓xau↓, wo↓ ʂɨ↘ mi↓ pau↓ i→xau↘.'
+#   espeak     : 'niχˈɑu, wˈo s.ˈi. mˈi pˈɑu jiɜχˈɑu.'
+_G2P = None
+
+
+def zh_phonemes(text: str) -> str:
+    global _G2P
+    if _G2P is None:
+        from misaki import zh
+
+        _G2P = zh.ZHG2P()
+    phonemes, _ = _G2P(text)
+    return phonemes
+
 
 class _SessShim:
     """onnx-community 导出的模型输入名是 input_ids，kokoro-onnx 按官方模型喂 tokens。"""
@@ -133,7 +149,9 @@ def main():
             voice, speed_s, b64 = parts[0], parts[1], parts[2]
             text = base64.b64decode(b64).decode("utf-8")
             speed = float(speed_s) if speed_s else 1.0
-            audio, sr = k.create(text, voice=voice, speed=speed, lang="cmn")
+            phonemes = zh_phonemes(text)  # 用 misaki，别用内置 espeak
+            audio, sr = k.create(text, voice=voice, speed=speed, lang="cmn",
+                                 phonemes=phonemes)
             pcm = np.clip(np.asarray(audio).reshape(-1), -1.0, 1.0)
             buf = io.BytesIO()
             with wave.open(buf, "wb") as w:
