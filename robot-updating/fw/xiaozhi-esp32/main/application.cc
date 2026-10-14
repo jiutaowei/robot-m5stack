@@ -522,8 +522,10 @@ void Application::InitializeProtocol() {
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
-            auto display = Board::GetInstance().GetDisplay();
-            display->SetChatMessage("system", "");
+            // 会话结束时**不要**清空气泡：上游这里会 SetChatMessage("system", "")
+            // 把屏幕上的气泡抹掉，用户刚听完回答就看不到内容了（实测反馈：
+            // 「回答完后底部气泡消失了，应该保留着展示播报的内容」）。
+            // 保留最后一条文本，直到用户下一次说话时被新的识别文本覆盖。
             SetDeviceState(kDeviceStateIdle);
         });
     });
