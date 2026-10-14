@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 from bs4 import BeautifulSoup
 from config.logger import setup_logging
@@ -11,14 +13,169 @@ if TYPE_CHECKING:
 TAG = __name__
 logger = setup_logging()
 
+# ===== Open-Meteo：免费、无需 key、无需注册（2026-10-14 接入，替代失效的和风 key）=====
+_OPEN_METEO_GEO = "https://geocoding-api.open-meteo.com/v1/search"
+_OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
+
+# WMO 天气代码 → 中文（https://open-meteo.com/en/docs）
+_WMO_ZH = {
+    0: "晴", 1: "晴间多云", 2: "多云", 3: "阴",
+    45: "有雾", 48: "雾凇",
+    51: "小毛毛雨", 53: "毛毛雨", 55: "大毛毛雨",
+    56: "冻毛毛雨", 57: "强冻毛毛雨",
+    61: "小雨", 63: "中雨", 65: "大雨",
+    66: "冻雨", 67: "强冻雨",
+    71: "小雪", 73: "中雪", 75: "大雪", 77: "雪粒",
+    80: "阵雨", 81: "强阵雨", 82: "暴雨",
+    85: "阵雪", 86: "强阵雪",
+    95: "雷阵雨", 96: "雷阵雨伴小冰雹", 99: "雷阵雨伴大冰雹",
+}
+
+
+def _wmo_zh(code) -> str:
+    try:
+        return _WMO_ZH.get(int(code), f"未知天气({code})")
+    except (TypeError, ValueError):
+        return "未知天气"
+
+
+def _geocode_variants(location: str):
+    """中文地名补「市」再查：实测查「桂林」只返回同名村庄（城市不在前 8 个结果里），
+    查「桂林市」才拿到广西桂林市（人口 157 万，PPLA2）。"""
+    variants = [location]
+    if location and location[-1] not in "市县区州盟":
+        variants.append(location + "市")
+    return variants
+
+
+def _geocode_score(rec: dict):
+    """给候选地点打分：行政级别越高越优先，同级比人口。
+
+    注意 PPLA4 是村级（安徽也有个叫「桂林」的 PPLA4 村，人口为空），
+    不能只按 PPLA 前缀就当成城市。
+    """
+    code = rec.get("feature_code") or ""
+    if code in ("PPLA", "PPLA2"):
+        rank = 4
+    elif code == "PPLA3":
+        rank = 3
+    elif code.startswith("PPL"):
+        rank = 2
+    else:
+        rank = 1
+    return (rank, rec.get("population") or 0)
+
+
+async def fetch_open_meteo(location: str):
+    """按地名查天气：先地理编码拿经纬度，再取实况 + 7 天预报。
+
+    实测坑：
+    1) 同名地点多，且不带「市」时城市可能不在结果里 → 按「市级优先 > 人口多」打分，
+       必要时补「市」再查一次；
+    2) Open-Meteo 偶发连接超时（实测南宁一次 ConnectTimeout）→ 每个请求重试 2 次。
+    """
+    async def _get(client, url, params):
+        last = None
+        for attempt in range(2):
+            try:
+                r = await client.get(url, params=params)
+                r.raise_for_status()
+                return r
+            except Exception as e:  # noqa: BLE001
+                last = e
+                if attempt == 0:
+                    await asyncio.sleep(0.6)
+        raise last
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=4.0)) as client:
+        hit = None
+        for variant in _geocode_variants(location):
+            geo = await _get(
+                client,
+                _OPEN_METEO_GEO,
+                {"name": variant, "count": 8, "language": "zh", "format": "json"},
+            )
+            for rec in (geo.json() or {}).get("results") or []:
+                if hit is None or _geocode_score(rec) > _geocode_score(hit):
+                    hit = rec
+        if not hit:
+            return None
+
+        name = hit.get("name") or location
+        admin = hit.get("admin1") or ""
+        if admin and name and admin != name:
+            if name in admin:
+                city = admin
+            elif admin in name:
+                city = name
+            else:
+                city = f"{admin}{name}"
+        else:
+            city = name or location
+
+        fc = await _get(
+            client,
+            _OPEN_METEO_FORECAST,
+            {
+                "latitude": hit["latitude"],
+                "longitude": hit["longitude"],
+                "current": "temperature_2m,relative_humidity_2m,apparent_temperature,"
+                           "weather_code,wind_speed_10m,precipitation",
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
+                         "precipitation_probability_max",
+                "timezone": "Asia/Shanghai",
+                "forecast_days": 7,
+                "wind_speed_unit": "kmh",
+            },
+        )
+        return {"city": city, "data": fc.json()}
+
+
+def format_open_meteo(info: dict, lang: str = "zh_CN") -> str:
+    """把 Open-Meteo 的 JSON 拼成一段适合播报的中文天气报告。"""
+    d = info.get("data") or {}
+    cur = d.get("current") or {}
+    daily = d.get("daily") or {}
+
+    report = f"您查询的位置是：{info.get('city', '')}\n\n"
+    if cur:
+        report += (
+            f"当前天气：{_wmo_zh(cur.get('weather_code'))}，"
+            f"气温 {cur.get('temperature_2m')}℃"
+            f"（体感 {cur.get('apparent_temperature')}℃），"
+            f"湿度 {cur.get('relative_humidity_2m')}%，"
+            f"风速 {cur.get('wind_speed_10m')} 公里/小时\n"
+        )
+
+    dates = daily.get("time") or []
+    codes = daily.get("weather_code") or []
+    highs = daily.get("temperature_2m_max") or []
+    lows = daily.get("temperature_2m_min") or []
+    rains = daily.get("precipitation_probability_max") or []
+    if dates:
+        report += "\n未来几天预报：\n"
+        for i, day in enumerate(dates):
+            desc = _wmo_zh(codes[i] if i < len(codes) else None)
+            hi = highs[i] if i < len(highs) else "-"
+            lo = lows[i] if i < len(lows) else "-"
+            rain = rains[i] if i < len(rains) else None
+            rain_txt = f"，降水概率 {rain}%" if rain is not None else ""
+            report += f"{day}：{desc}，气温 {lo}~{hi}℃{rain_txt}\n"
+
+    report += "\n（如需某一天的具体天气，请告诉我日期）"
+    return report
+
+
 GET_WEATHER_FUNCTION_DESC = {
     "type": "function",
     "function": {
         "name": "get_weather",
         "description": (
-            "获取某个地点的天气，用户应提供一个位置，比如用户说杭州天气，参数为：杭州。"
-            "如果用户说的是省份，默认用省会城市。如果用户说的不是省份或城市而是一个地名，默认用该地所在省份的省会城市。"
-            "重要：本地未来7天天气已在上下文中提供，用户未指明其他城市时绝对不要调用此工具。"
+            "查询某个地点的天气（含实况与未来几天预报）。用户应提供一个位置，"
+            "比如用户说杭州天气，参数为：杭州。如果用户说的是省份，默认用省会城市；"
+            "如果用户说的不是省份或城市而是一个地名，默认用该地所在省份的省会城市。"
+            "注意：只有「设备所在地」的天气已在上下文中提供；用户问的是其他城市时，"
+            "必须调用本工具查询，不要凭空回答「查不到天气」。"
         ),
         "parameters": {
             "type": "object",
@@ -198,32 +355,20 @@ async def get_weather(conn: "ConnectionHandler", location: str = None, lang: str
         return ActionResponse(Action.REQLLM, cached_weather_report, None)
 
     # 缓存未命中，获取实时天气数据
-    city_info = await fetch_city_info(location, api_key, api_host)
-    if not city_info:
+    # 2026-10-14：改用 Open-Meteo（免费、无需 key、国内外均可直连）。
+    # 原实现依赖和风天气：代码里写死的示例 key 早已失效，报
+    # 「Authentication failed, check your KEY/Token or Host」，用户侧表现就是
+    # 「问天气查不出来」；而且它还要抓取网页 HTML，网站一改版就废。
+    try:
+        info = await fetch_open_meteo(location)
+    except Exception as e:  # noqa: BLE001
+        logger.bind(tag=TAG).error(f"Open-Meteo 查询失败: {type(e).__name__}: {e}")
+        info = None
+    if not info:
         return ActionResponse(
             Action.REQLLM, f"未找到相关的城市: {location}，请确认地点是否正确", None
         )
-    soup = await fetch_weather_page(city_info["fxLink"])
-    if not soup:
-        return ActionResponse(Action.REQLLM, None, "请求失败")
-    city_name, current_abstract, current_basic, temps_list = parse_weather_info(soup)
-
-    weather_report = f"您查询的位置是：{city_name}\n\n当前天气: {current_abstract}\n"
-
-    # 添加有效的当前天气参数
-    if current_basic:
-        weather_report += "详细参数：\n"
-        for key, value in current_basic.items():
-            if value != "0":  # 过滤无效值
-                weather_report += f"  · {key}: {value}\n"
-
-    # 添加7天预报
-    weather_report += "\n未来7天预报：\n"
-    for date, weather, high, low in temps_list:
-        weather_report += f"{date}: {weather}，气温 {low}~{high}\n"
-
-    # 提示语
-    weather_report += "\n（如需某一天的具体天气，请告诉我日期）"
+    weather_report = format_open_meteo(info, lang)
 
     # 缓存完整的天气报告
     cache_manager.set(CacheType.WEATHER, weather_cache_key, weather_report)
